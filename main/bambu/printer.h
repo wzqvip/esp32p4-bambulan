@@ -15,6 +15,7 @@ typedef enum {
     PRINTER_LINK_AUTH_FAILED,   // 访问码错误
     PRINTER_LINK_TLS_FAILED,    // TLS 握手/证书失败
     PRINTER_LINK_OFFLINE,       // 连不上或断开，正在重连
+    PRINTER_LINK_BUSY,          // 打印机拒绝 TLS 握手：局域网连接数已满（多半被 Bambu Studio / Handy 占着）
 } printer_link_t;
 
 typedef struct {
@@ -29,6 +30,7 @@ typedef struct {
     bbl_status_t st;
     uint32_t rx_count;       // 收到的报文数
     int64_t last_rx_us;      // 最近一次收到报文的时间
+    char dev_name[48];       // 打印机自己的名字（来自局域网 SSDP 广播），空表示还没收到
 } printer_snapshot_t;
 
 /** 从 Kconfig 读配置并创建客户端（不连接） */
@@ -43,6 +45,12 @@ void printers_start(void);
 bool printer_get(int idx, printer_snapshot_t *out);
 
 const char *printer_link_name(printer_link_t l);
+
+/** 显示用的名字：优先用打印机自己广播的名字，否则用配置里的名字。buf 至少 48 字节。 */
+const char *printer_display_name(int idx, char *buf, size_t cap);
+
+/** 发现模块收到 SSDP 广播时调用：按序列号匹配，更新名字（UTF-8） */
+void printer_set_dev_name(const char *serial, const char *name);
 
 // 控制命令（非阻塞，入队发送）
 esp_err_t printer_pause(int idx);

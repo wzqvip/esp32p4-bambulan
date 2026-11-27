@@ -348,7 +348,8 @@ static void set_badge(lv_obj_t *badge, const printer_snapshot_t *s)
         lv_obj_set_style_bg_color(badge, state_color(s->st.gcode_state), 0);
     } else {
         lv_label_set_text(badge, printer_link_name(s->link));
-        bool bad = s->link == PRINTER_LINK_AUTH_FAILED || s->link == PRINTER_LINK_TLS_FAILED;
+        bool bad = s->link == PRINTER_LINK_AUTH_FAILED || s->link == PRINTER_LINK_TLS_FAILED ||
+                   s->link == PRINTER_LINK_BUSY;
         lv_obj_set_style_bg_color(badge, bad ? C_RED : C_CARD2, 0);
     }
 }
@@ -394,8 +395,12 @@ static void fmt_note(char *buf, size_t n, const printer_snapshot_t *s, lv_color_
         snprintf(buf, n, "访问码错误，请核对打印机屏幕上的局域网访问码");
         *color = C_RED;
         return;
+    case PRINTER_LINK_BUSY:
+        snprintf(buf, n, "连接数已满，请关掉 Bambu Studio 的设备页");
+        *color = C_RED;
+        return;
     case PRINTER_LINK_TLS_FAILED:
-        snprintf(buf, n, "TLS 校验失败，可在 menuconfig 关闭证书校验再试");
+        snprintf(buf, n, "TLS 证书校验失败，可在 menuconfig 关闭证书校验再试");
         *color = C_RED;
         return;
     case PRINTER_LINK_OFFLINE:
@@ -483,6 +488,9 @@ static void update_card(card_t *c, int idx, const printer_snapshot_t *s)
     bool has = s->link == PRINTER_LINK_ONLINE && st->valid;
     bool active = has && bbl_state_is_active(st->gcode_state);
 
+    char nm[48];
+    printer_display_name(idx, nm, sizeof(nm));
+    if (strcmp(lv_label_get_text(c->name), nm) != 0) lv_label_set_text(c->name, nm);
     set_badge(c->state, s);
     update_camview(&c->cam, idx, has, st->percent);
     lv_label_set_text(c->file, has ? task_name(st) : "");
@@ -598,7 +606,9 @@ static void stop_clicked(lv_event_t *e)
     if (s_confirm) return;
     const printer_cfg_t *cfg = printer_cfg(s_detail_idx);
     char buf[96];
-    snprintf(buf, sizeof(buf), "确定要停止 %s 的打印吗？停止后无法继续。", cfg ? cfg->name : "");
+    char nm[48];
+    snprintf(buf, sizeof(buf), "确定要停止 %s 的打印吗？停止后无法继续。",
+             cfg ? printer_display_name(s_detail_idx, nm, sizeof(nm)) : "");
     s_confirm = lv_msgbox_create(NULL);
     lv_obj_set_style_text_font(s_confirm, FONT_S, 0);
     lv_obj_set_style_bg_color(s_confirm, C_CARD, 0);
@@ -823,7 +833,8 @@ static void show_detail(int idx)
     const printer_cfg_t *cfg = printer_cfg(idx);
     if (!cfg) return;
     s_detail_idx = idx;
-    lv_label_set_text(s_d.title, cfg->name);
+    char nm[48];
+    lv_label_set_text(s_d.title, printer_display_name(idx, nm, sizeof(nm)));
     for (int i = 0; i < printers_count() && i < PRINTER_MAX; i++) {
         if (i == idx) lv_obj_remove_flag(s_d.cam[i].box, LV_OBJ_FLAG_HIDDEN);
         else lv_obj_add_flag(s_d.cam[i].box, LV_OBJ_FLAG_HIDDEN);
@@ -876,6 +887,9 @@ static void update_detail(const printer_snapshot_t *s)
     char buf[128], t[48];
     int64_t tnow = now_ms();
 
+    char nm[48];
+    printer_display_name(s_detail_idx, nm, sizeof(nm));
+    if (strcmp(lv_label_get_text(d->title), nm) != 0) lv_label_set_text(d->title, nm);
     set_badge(d->state, s);
     snprintf(buf, sizeof(buf), "%s · %s", printer_link_name(s->link), cfg->host[0] ? cfg->host : "-");
     lv_label_set_text(d->link, buf);

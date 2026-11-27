@@ -7,6 +7,7 @@
 #include "board.h"
 #include "camera.h"
 #include "cover.h"
+#include "discover.h"
 #include "net.h"
 #include "printer.h"
 #include "ui.h"
@@ -18,6 +19,7 @@ static void on_network_ready(void)
     printers_start();
     camera_start_all();
     cover_start_all();
+    discover_start();
 }
 
 void app_main(void)

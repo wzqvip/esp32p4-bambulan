@@ -55,6 +55,7 @@ const char *printer_link_name(printer_link_t l)
     case PRINTER_LINK_AUTH_FAILED: return "访问码错误";
     case PRINTER_LINK_TLS_FAILED: return "TLS 失败";
     case PRINTER_LINK_OFFLINE: return "离线";
+    case PRINTER_LINK_BUSY: return "连接已满";
     default: return "?";
     }
 }
@@ -99,7 +100,8 @@ static void mqtt_event_handler(void *arg, esp_event_base_t base, int32_t event_i
 
     switch ((esp_mqtt_event_id_t)event_id) {
     case MQTT_EVENT_BEFORE_CONNECT:
-        if (p->snap.link != PRINTER_LINK_AUTH_FAILED && p->snap.link != PRINTER_LINK_TLS_FAILED) {
+        if (p->snap.link != PRINTER_LINK_AUTH_FAILED && p->snap.link != PRINTER_LINK_TLS_FAILED &&
+            p->snap.link != PRINTER_LINK_BUSY) {
             set_link(p, PRINTER_LINK_CONNECTING);
         }
         break;
@@ -128,10 +130,12 @@ static void mqtt_event_handler(void *arg, esp_event_base_t base, int32_t event_i
             esp_err_t last = ev->error_handle->esp_tls_last_esp_err;
             ESP_LOGE(TAG, "[%s] transport error: esp_err=0x%x tls=-0x%x sock_errno=%d", p->cfg.name, last, -tls_err,
                      ev->error_handle->esp_transport_sock_errno);
-            bool tls_problem = last == ESP_ERR_MBEDTLS_SSL_HANDSHAKE_FAILED ||
-                               last == ESP_ERR_MBEDTLS_X509_CRT_PARSE_FAILED ||
-                               ev->error_handle->esp_tls_cert_verify_flags != 0;
-            set_link(p, tls_problem ? PRINTER_LINK_TLS_FAILED : PRINTER_LINK_OFFLINE);
+            // 证书真的有问题才算 TLS 失败；握手时打印机直接回 fatal alert（-0x7780）
+            // 实测是它的局域网连接数满了（Bambu Studio 设备页每台会占 4 条）
+            bool cert_problem = last == ESP_ERR_MBEDTLS_X509_CRT_PARSE_FAILED ||
+                                ev->error_handle->esp_tls_cert_verify_flags != 0;
+            bool refused = last == ESP_ERR_MBEDTLS_SSL_HANDSHAKE_FAILED && !cert_problem;
+            set_link(p, cert_problem ? PRINTER_LINK_TLS_FAILED : refused ? PRINTER_LINK_BUSY : PRINTER_LINK_OFFLINE);
         }
         break;
 
@@ -263,6 +267,30 @@ void printers_start(void)
 }
 
 int printers_count(void) { return s_count; }
+
+const char *printer_display_name(int idx, char *buf, size_t cap)
+{
+    if (idx < 0 || idx >= s_count) return "-";
+    printer_t *p = &s_printers[idx];
+    xSemaphoreTake(p->lock, portMAX_DELAY);
+    snprintf(buf, cap, "%s", p->snap.dev_name[0] ? p->snap.dev_name : p->cfg.name);
+    xSemaphoreGive(p->lock);
+    return buf;
+}
+
+void printer_set_dev_name(const char *serial, const char *name)
+{
+    for (int i = 0; i < s_count; i++) {
+        printer_t *p = &s_printers[i];
+        if (strcmp(p->cfg.serial, serial) != 0) continue;
+        xSemaphoreTake(p->lock, portMAX_DELAY);
+        if (strcmp(p->snap.dev_name, name) != 0) {
+            ESP_LOGI(TAG, "[%s] printer name: %s", p->cfg.name, name);
+            snprintf(p->snap.dev_name, sizeof(p->snap.dev_name), "%s", name);
+        }
+        xSemaphoreGive(p->lock);
+    }
+}
 
 const printer_cfg_t *printer_cfg(int idx)
 {

@@ -59,8 +59,8 @@ const char *camera_state_text(camera_state_t st)
     case CAMERA_OFF: return "摄像头未开启";
     case CAMERA_CONNECTING: return "正在连接摄像头…";
     case CAMERA_STREAMING: return "";
-    case CAMERA_REJECTED: return "打印机拒绝了视频连接\n需开启开发者模式，或检查访问码";
-    case CAMERA_CONN_FAILED: return "连不上摄像头（6000 端口），稍后重试";
+    case CAMERA_REJECTED: return "打印机拒绝了视频连接\n（被 Bambu Studio 占用，或访问码错误）";
+    case CAMERA_CONN_FAILED: return "连不上摄像头，稍后重试\n（电脑上开着 Bambu Studio 的摄像头画面时会被占用）";
     case CAMERA_DECODE_FAILED: return "画面解码失败";
     default: return "";
     }

@@ -27,8 +27,13 @@ bool printer_get(int i, printer_snapshot_t *o)
 }
 const char *printer_link_name(printer_link_t l)
 {
-    static const char *n[] = {"未配置", "等待网络", "连接中", "在线", "访问码错误", "TLS 失败", "离线"};
+    static const char *n[] = {"未配置", "等待网络", "连接中", "在线", "访问码错误", "TLS 失败", "离线", "连接已满"};
     return n[l];
+}
+const char *printer_display_name(int i, char *buf, size_t cap)
+{
+    snprintf(buf, cap, "%s", i == 1 ? "塔可的A1" : cfgs[i].name);
+    return buf;
 }
 static const char *s_last_cmd = "";
 #define STUB(name, sig)  \
@@ -66,7 +71,7 @@ void camera_start_all(void) {}
 camera_state_t camera_state(int idx) { return idx == 0 ? CAMERA_STREAMING : CAMERA_REJECTED; }
 const char *camera_state_text(camera_state_t st)
 {
-    return st == CAMERA_REJECTED ? "打印机拒绝了视频连接\n需开启开发者模式，或检查访问码" : "";
+    return st == CAMERA_REJECTED ? "打印机拒绝了视频连接\n（被 Bambu Studio 占用，或访问码错误）" : "";
 }
 bool camera_has_frame(int idx) { return idx == 0; }
 static void fake_camera_frame(void)
@@ -247,7 +252,7 @@ int main(void)
     if (mb) lv_obj_delete(mb);   // 关掉确认框（模拟器里直接删）
     tap(70, 32);                 // 返回
     run(400);
-    snaps[0].link = PRINTER_LINK_AUTH_FAILED;
+    snaps[0].link = PRINTER_LINK_BUSY;
     tap(760, 300);               // 二号机
     run(600);
     b->result_seq = 1;
