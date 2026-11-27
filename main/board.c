@@ -13,6 +13,8 @@
 #include "esp_check.h"
 #include "esp_log.h"
 #include "esp_lvgl_port.h"
+#include "freertos/FreeRTOS.h"
+#include "freertos/task.h"
 
 static const char *TAG = "board";
 
@@ -74,11 +76,6 @@ static esp_err_t touch_init(esp_lcd_touch_handle_t *out)
     };
     ESP_RETURN_ON_ERROR(i2c_new_master_bus(&bc, &bus), TAG, "i2c bus");
 
-    esp_lcd_panel_io_handle_t io;
-    esp_lcd_panel_io_i2c_config_t io_cfg = ESP_LCD_TOUCH_IO_I2C_GT911_CONFIG();
-    io_cfg.scl_speed_hz = 400000;
-    ESP_RETURN_ON_ERROR(esp_lcd_new_panel_io_i2c(bus, &io_cfg, &io), TAG, "touch io");
-
     const esp_lcd_touch_config_t tc = {
         .x_max = BOARD_LCD_H_RES,
         .y_max = BOARD_LCD_V_RES,
@@ -86,7 +83,27 @@ static esp_err_t touch_init(esp_lcd_touch_handle_t *out)
         .int_gpio_num = PIN_TOUCH_INT,
         .levels = {.reset = 0, .interrupt = 0},
     };
-    return esp_lcd_touch_new_i2c_gt911(io, &tc, out);
+    // GT911 复位时按 INT 电平选地址（0x5D 或 0x14），上电时序不稳时偶尔会落到另一个地址，
+    // 所以两个地址轮流试几次
+    static const uint8_t addrs[] = {ESP_LCD_TOUCH_IO_I2C_GT911_ADDRESS, ESP_LCD_TOUCH_IO_I2C_GT911_ADDRESS_BACKUP};
+    esp_err_t err = ESP_FAIL;
+    for (int attempt = 0; attempt < 3 && err != ESP_OK; attempt++) {
+        for (size_t a = 0; a < sizeof(addrs) && err != ESP_OK; a++) {
+            esp_lcd_panel_io_handle_t io;
+            esp_lcd_panel_io_i2c_config_t io_cfg = ESP_LCD_TOUCH_IO_I2C_GT911_CONFIG();
+            io_cfg.dev_addr = addrs[a];
+            io_cfg.scl_speed_hz = 400000;
+            ESP_RETURN_ON_ERROR(esp_lcd_new_panel_io_i2c(bus, &io_cfg, &io), TAG, "touch io");
+            err = esp_lcd_touch_new_i2c_gt911(io, &tc, out);
+            if (err == ESP_OK) {
+                ESP_LOGI(TAG, "GT911 at 0x%02X (attempt %d)", addrs[a], attempt + 1);
+            } else {
+                esp_lcd_panel_io_del(io);
+                vTaskDelay(pdMS_TO_TICKS(50));
+            }
+        }
+    }
+    return err;
 }
 
 esp_err_t board_display_init(lv_display_t **out_disp)

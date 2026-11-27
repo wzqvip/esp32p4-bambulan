@@ -124,17 +124,27 @@ static bool decode_frame(cam_t *c, size_t len, uint8_t *dst)
     };
     uint32_t out_len = 0;
     if (jpeg_decoder_process(s_dec, &dcfg, c->jpeg, len, s_dec_out, s_dec_out_size, &out_len) == ESP_OK) {
-        // 等比缩放到 480x270 以内，PPA 缩放步进 1/16
+        // 等比缩放后裁掉多出的边，铺满 480x270（PPA 缩放步进 1/16，向上取整保证铺满）
+        static bool logged;
+        if (!logged) {
+            logged = true;
+            ESP_LOGI(TAG, "camera frame %lux%lu", (unsigned long)info.width, (unsigned long)info.height);
+        }
         float sx = (float)CAMERA_VIEW_W / info.width, sy = (float)CAMERA_VIEW_H / info.height;
-        float s = sx < sy ? sx : sy;
-        s = (float)((int)(s * 16)) / 16.0f;
-        if (s <= 0) s = 1.0f / 16;
-        uint32_t ow = (uint32_t)(info.width * s), oh = (uint32_t)(info.height * s);
+        float s = sx > sy ? sx : sy;
+        int s16 = (int)(s * 16);
+        if ((float)s16 < s * 16) s16++;
+        if (s16 < 1) s16 = 1;
+        s = s16 / 16.0f;
+        uint32_t bw = (uint32_t)(CAMERA_VIEW_W / s), bh = (uint32_t)(CAMERA_VIEW_H / s);
+        if (bw > info.width) bw = info.width;
+        if (bh > info.height) bh = info.height;
+        uint32_t ow = (uint32_t)(bw * s), oh = (uint32_t)(bh * s);
         if (ow > CAMERA_VIEW_W) ow = CAMERA_VIEW_W;
         if (oh > CAMERA_VIEW_H) oh = CAMERA_VIEW_H;
         ppa_srm_oper_config_t op = {
-            .in = {.buffer = s_dec_out, .pic_w = info.width, .pic_h = aligned_h, .block_w = info.width,
-                   .block_h = info.height, .block_offset_x = 0, .block_offset_y = 0,
+            .in = {.buffer = s_dec_out, .pic_w = info.width, .pic_h = aligned_h, .block_w = bw,
+                   .block_h = bh, .block_offset_x = (info.width - bw) / 2, .block_offset_y = (info.height - bh) / 2,
                    .srm_cm = PPA_SRM_COLOR_MODE_RGB565},
             .out = {.buffer = dst, .buffer_size = FRAME_ALLOC, .pic_w = CAMERA_VIEW_W, .pic_h = CAMERA_VIEW_H,
                     .block_offset_x = (CAMERA_VIEW_W - ow) / 2, .block_offset_y = (CAMERA_VIEW_H - oh) / 2,
