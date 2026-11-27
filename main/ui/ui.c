@@ -93,13 +93,46 @@ static detail_t s_d;
 static int s_detail_idx = -1;
 static lv_obj_t *s_confirm;
 
+// ---------- 只在值变化时才设置（LVGL 设同样的值也会重绘，每 250ms 刷一遍会让界面一直在重画） ----------
+static void set_text(lv_obj_t *l, const char *txt)
+{
+    if (strcmp(lv_label_get_text(l), txt) != 0) lv_label_set_text(l, txt);
+}
+
+static void set_text_color(lv_obj_t *o, lv_color_t c)
+{
+    if (!lv_color_eq(lv_obj_get_style_text_color(o, 0), c)) lv_obj_set_style_text_color(o, c, 0);
+}
+
+static void set_bg_color(lv_obj_t *o, lv_color_t c)
+{
+    if (!lv_color_eq(lv_obj_get_style_bg_color(o, 0), c)) lv_obj_set_style_bg_color(o, c, 0);
+}
+
+static void set_image_opa(lv_obj_t *o, lv_opa_t v)
+{
+    if (lv_obj_get_style_image_opa(o, 0) != v) lv_obj_set_style_image_opa(o, v, 0);
+}
+
+static void set_border_width(lv_obj_t *o, int32_t w)
+{
+    if (lv_obj_get_style_border_width(o, 0) != w) lv_obj_set_style_border_width(o, w, 0);
+}
+
+static void set_hidden(lv_obj_t *o, bool hidden)
+{
+    if (lv_obj_has_flag(o, LV_OBJ_FLAG_HIDDEN) == hidden) return;
+    if (hidden) lv_obj_add_flag(o, LV_OBJ_FLAG_HIDDEN);
+    else lv_obj_remove_flag(o, LV_OBJ_FLAG_HIDDEN);
+}
+
 // ---------- 小工具 ----------
 static lv_obj_t *mk_label(lv_obj_t *parent, const lv_font_t *font, lv_color_t color, const char *txt)
 {
     lv_obj_t *l = lv_label_create(parent);
     lv_obj_set_style_text_font(l, font, 0);
-    lv_obj_set_style_text_color(l, color, 0);
-    lv_label_set_text(l, txt);
+    set_text_color(l, color);
+    set_text(l, txt);
     return l;
 }
 
@@ -109,7 +142,7 @@ static lv_obj_t *mk_box(lv_obj_t *parent, int x, int y, int w, int h, lv_color_t
     lv_obj_remove_style_all(o);
     lv_obj_set_pos(o, x, y);
     lv_obj_set_size(o, w, h);
-    lv_obj_set_style_bg_color(o, bg, 0);
+    set_bg_color(o, bg);
     lv_obj_set_style_bg_opa(o, LV_OPA_COVER, 0);
     lv_obj_set_style_radius(o, radius, 0);
     lv_obj_remove_flag(o, LV_OBJ_FLAG_SCROLLABLE);
@@ -154,7 +187,7 @@ static lv_obj_t *mk_btn(lv_obj_t *parent, const char *txt, lv_color_t bg, int w,
 {
     lv_obj_t *b = lv_button_create(parent);
     lv_obj_set_size(b, w, h);
-    lv_obj_set_style_bg_color(b, bg, 0);
+    set_bg_color(b, bg);
     lv_obj_set_style_radius(b, 12, 0);
     lv_obj_set_style_shadow_width(b, 0, 0);
     lv_obj_set_style_bg_color(b, C_CARD2, LV_STATE_DISABLED);
@@ -193,30 +226,30 @@ static void build_camview(camview_t *v, lv_obj_t *parent, int idx, int x, int y,
     lv_image_set_inner_align(v->cov_img, LV_IMAGE_ALIGN_STRETCH);
     lv_obj_center(v->cov_img);
     lv_obj_remove_flag(v->cov_img, LV_OBJ_FLAG_CLICKABLE);
-    lv_obj_add_flag(v->cov_box, LV_OBJ_FLAG_HIDDEN);
+    set_hidden(v->cov_box, true);
     cover_bind_image(idx, v->cov_img);
 }
 
 static void update_camview(camview_t *v, int idx, bool has, int pct)
 {
-    if (cover_has_image(idx)) lv_obj_remove_flag(v->cov_box, LV_OBJ_FLAG_HIDDEN);
-    else lv_obj_add_flag(v->cov_box, LV_OBJ_FLAG_HIDDEN);
+    if (cover_has_image(idx)) set_hidden(v->cov_box, false);
+    else set_hidden(v->cov_box, true);
     camera_state_t cs = camera_state(idx);
     bool live = cs == CAMERA_STREAMING && camera_has_frame(idx);
     if (live) {
-        lv_obj_add_flag(v->pct, LV_OBJ_FLAG_HIDDEN);
-        lv_obj_add_flag(v->msg, LV_OBJ_FLAG_HIDDEN);
+        set_hidden(v->pct, true);
+        set_hidden(v->msg, true);
         return;
     }
     char buf[16];
     if (has) snprintf(buf, sizeof(buf), "%d%%", pct);
     else snprintf(buf, sizeof(buf), "-");
-    lv_label_set_text(v->pct, buf);
-    lv_label_set_text(v->msg, camera_state_text(cs));
-    lv_obj_remove_flag(v->pct, LV_OBJ_FLAG_HIDDEN);
-    lv_obj_remove_flag(v->msg, LV_OBJ_FLAG_HIDDEN);
+    set_text(v->pct, buf);
+    set_text(v->msg, camera_state_text(cs));
+    set_hidden(v->pct, false);
+    set_hidden(v->msg, false);
     // 断流后还留着上一帧：压暗一点，别让人误以为是实时画面
-    lv_obj_set_style_image_opa(v->img, camera_has_frame(idx) ? LV_OPA_40 : LV_OPA_COVER, 0);
+    set_image_opa(v->img, camera_has_frame(idx) ? LV_OPA_40 : LV_OPA_COVER);
 }
 
 // AMS 料位：色块 + 材料，底部细进度条是余量，当前料位加框
@@ -228,11 +261,11 @@ static void build_ams_row(ams_row_t *a, lv_obj_t *parent, int x, int y, int w)
     for (int i = 0; i < AMS_SLOTS; i++) {
         lv_obj_t *c = mk_box(a->row, i * (cw + 8), 0, cw, 32, C_CARD2, 8);
         lv_obj_set_style_border_color(c, C_TEXT, 0);
-        lv_obj_set_style_border_width(c, 0, 0);
+        set_border_width(c, 0);
         a->chip[i] = c;
         a->swatch[i] = mk_box(c, 6, 6, 20, 20, C_CARD, 5);
         lv_obj_set_style_border_color(a->swatch[i], C_MUTED, 0);
-        lv_obj_set_style_border_width(a->swatch[i], 1, 0);
+        set_border_width(a->swatch[i], 1);
         a->txt[i] = mk_label(c, FONT_S, C_TEXT, "");
         lv_obj_set_width(a->txt[i], cw - 36);
         lv_label_set_long_mode(a->txt[i], LV_LABEL_LONG_CLIP);
@@ -244,35 +277,35 @@ static void build_ams_row(ams_row_t *a, lv_obj_t *parent, int x, int y, int w)
 static void update_ams_row(ams_row_t *a, const bbl_status_t *st, bool has)
 {
     if (!has || st->ams_trays <= 0) {
-        lv_obj_add_flag(a->row, LV_OBJ_FLAG_HIDDEN);
+        set_hidden(a->row, true);
         return;
     }
-    lv_obj_remove_flag(a->row, LV_OBJ_FLAG_HIDDEN);
+    set_hidden(a->row, false);
     char buf[24];
     for (int i = 0; i < AMS_SLOTS; i++) {
         if (i >= st->ams_trays) {
-            lv_obj_add_flag(a->chip[i], LV_OBJ_FLAG_HIDDEN);
+            set_hidden(a->chip[i], true);
             continue;
         }
-        lv_obj_remove_flag(a->chip[i], LV_OBJ_FLAG_HIDDEN);
+        set_hidden(a->chip[i], false);
         const bbl_tray_t *t = &st->tray[i];
-        lv_obj_set_style_border_width(a->chip[i], st->tray_now == i ? 2 : 0, 0);
+        set_border_width(a->chip[i], st->tray_now == i ? 2 : 0);
         if (t->loaded) {
-            lv_obj_set_style_bg_color(a->swatch[i], lv_color_hex(t->color), 0);
+            set_bg_color(a->swatch[i], lv_color_hex(t->color));
             snprintf(buf, sizeof(buf), "%s", t->type);
         } else {
-            lv_obj_set_style_bg_color(a->swatch[i], C_CARD, 0);
+            set_bg_color(a->swatch[i], C_CARD);
             snprintf(buf, sizeof(buf), "空");
         }
-        lv_label_set_text(a->txt[i], buf);
-        lv_obj_set_style_text_color(a->txt[i], t->loaded ? C_TEXT : C_MUTED, 0);
+        set_text(a->txt[i], buf);
+        set_text_color(a->txt[i], t->loaded ? C_TEXT : C_MUTED);
         // 余量未知（没有 RFID 的料盘通常是 -1）就不画
         if (t->loaded && t->remain >= 0) {
-            lv_obj_remove_flag(a->remain[i], LV_OBJ_FLAG_HIDDEN);
+            set_hidden(a->remain[i], false);
             lv_bar_set_value(a->remain[i], t->remain, LV_ANIM_OFF);
             lv_obj_set_style_bg_color(a->remain[i], t->remain < 15 ? C_WARN : C_TEAL, LV_PART_INDICATOR);
         } else {
-            lv_obj_add_flag(a->remain[i], LV_OBJ_FLAG_HIDDEN);
+            set_hidden(a->remain[i], true);
         }
     }
 }
@@ -344,13 +377,13 @@ static lv_color_t state_color(bbl_gcode_state_t st)
 static void set_badge(lv_obj_t *badge, const printer_snapshot_t *s)
 {
     if (s->link == PRINTER_LINK_ONLINE && s->st.valid) {
-        lv_label_set_text(badge, bbl_gcode_state_name(s->st.gcode_state));
-        lv_obj_set_style_bg_color(badge, state_color(s->st.gcode_state), 0);
+        set_text(badge, bbl_gcode_state_name(s->st.gcode_state));
+        set_bg_color(badge, state_color(s->st.gcode_state));
     } else {
-        lv_label_set_text(badge, printer_link_name(s->link));
+        set_text(badge, printer_link_name(s->link));
         bool bad = s->link == PRINTER_LINK_AUTH_FAILED || s->link == PRINTER_LINK_TLS_FAILED ||
                    s->link == PRINTER_LINK_BUSY;
-        lv_obj_set_style_bg_color(badge, bad ? C_RED : C_CARD2, 0);
+        set_bg_color(badge, bad ? C_RED : C_CARD2);
     }
 }
 
@@ -371,7 +404,7 @@ static void set_labelf(lv_obj_t *l, const char *prefix, const char *val)
 {
     char buf[96];
     snprintf(buf, sizeof(buf), "%s %s", prefix, val);
-    lv_label_set_text(l, buf);
+    set_text(l, buf);
 }
 
 static void fmt_temp(char *buf, size_t n, bool has, float cur, float target)
@@ -490,13 +523,13 @@ static void update_card(card_t *c, int idx, const printer_snapshot_t *s)
 
     char nm[48];
     printer_display_name(idx, nm, sizeof(nm));
-    if (strcmp(lv_label_get_text(c->name), nm) != 0) lv_label_set_text(c->name, nm);
+    if (strcmp(lv_label_get_text(c->name), nm) != 0) set_text(c->name, nm);
     set_badge(c->state, s);
     update_camview(&c->cam, idx, has, st->percent);
-    lv_label_set_text(c->file, has ? task_name(st) : "");
+    set_text(c->file, has ? task_name(st) : "");
     if (has) snprintf(buf, sizeof(buf), "%d%%", st->percent);
     else buf[0] = '\0';
-    lv_label_set_text(c->pct, buf);
+    set_text(c->pct, buf);
     update_bar(c->bar, st, has);
 
     fmt_start(t, sizeof(t), st);
@@ -518,12 +551,12 @@ static void update_card(card_t *c, int idx, const printer_snapshot_t *s)
     lv_color_t col;
     fmt_note(buf, sizeof(buf), s, &col);
     if (buf[0] || !has || st->ams_trays <= 0) {
-        lv_obj_add_flag(c->ams.row, LV_OBJ_FLAG_HIDDEN);
-        lv_obj_remove_flag(c->note, LV_OBJ_FLAG_HIDDEN);
-        lv_label_set_text(c->note, buf[0] ? buf : "点按查看详情和控制");
-        lv_obj_set_style_text_color(c->note, buf[0] ? col : C_MUTED, 0);
+        set_hidden(c->ams.row, true);
+        set_hidden(c->note, false);
+        set_text(c->note, buf[0] ? buf : "点按查看详情和控制");
+        set_text_color(c->note, buf[0] ? col : C_MUTED);
     } else {
-        lv_obj_add_flag(c->note, LV_OBJ_FLAG_HIDDEN);
+        set_hidden(c->note, true);
         update_ams_row(&c->ams, st, has);
     }
 }
@@ -545,9 +578,9 @@ static void build_topbar(lv_obj_t *scr, const char *title, lv_obj_t **clock, lv_
 static void build_overview(void)
 {
     s_overview = lv_obj_create(NULL);
-    lv_obj_set_style_bg_color(s_overview, C_BG, 0);
+    set_bg_color(s_overview, C_BG);
     lv_obj_remove_flag(s_overview, LV_OBJ_FLAG_SCROLLABLE);
-    build_topbar(s_overview, "拓竹打印机", &s_clock, &s_wifi);
+    build_topbar(s_overview, "Bambu-Lan", &s_clock, &s_wifi);
 
     int n = printers_count();
     for (int i = 0; i < n; i++) {
@@ -565,8 +598,8 @@ static void back_clicked(lv_event_t *e)
 
 static void set_status(const char *txt, lv_color_t color)
 {
-    lv_label_set_text(s_d.status, txt);
-    lv_obj_set_style_text_color(s_d.status, color, 0);
+    set_text(s_d.status, txt);
+    set_text_color(s_d.status, color);
 }
 
 static void report_send(esp_err_t err, const char *what)
@@ -611,7 +644,7 @@ static void stop_clicked(lv_event_t *e)
              cfg ? printer_display_name(s_detail_idx, nm, sizeof(nm)) : "");
     s_confirm = lv_msgbox_create(NULL);
     lv_obj_set_style_text_font(s_confirm, FONT_S, 0);
-    lv_obj_set_style_bg_color(s_confirm, C_CARD, 0);
+    set_bg_color(s_confirm, C_CARD);
     lv_obj_set_style_radius(s_confirm, 16, 0);
     lv_obj_set_style_pad_all(s_confirm, 12, 0);
     lv_obj_set_width(s_confirm, 600);
@@ -621,10 +654,10 @@ static void stop_clicked(lv_event_t *e)
     lv_obj_set_style_pad_ver(text, 16, 0);
     lv_obj_t *no = lv_msgbox_add_footer_button(s_confirm, "取消");
     lv_obj_set_size(no, 160, 56);
-    lv_obj_set_style_bg_color(no, C_CARD2, 0);
+    set_bg_color(no, C_CARD2);
     lv_obj_t *yes = lv_msgbox_add_footer_button(s_confirm, "确认停止");
     lv_obj_set_size(yes, 160, 56);
-    lv_obj_set_style_bg_color(yes, C_RED, 0);
+    set_bg_color(yes, C_RED);
     lv_obj_add_event_cb(yes, confirm_cb, LV_EVENT_CLICKED, (void *)(intptr_t)1);
     lv_obj_set_height(lv_msgbox_get_footer(s_confirm), 80);
     lv_obj_set_style_bg_opa(lv_msgbox_get_header(s_confirm), LV_OPA_TRANSP, 0);
@@ -665,7 +698,7 @@ static void temp_step(lv_event_t *e)
     ev->pending = true;
     char buf[16];
     snprintf(buf, sizeof(buf), "%d°C", ev->value);
-    lv_label_set_text(tb->bed ? s_d.bed_val : s_d.nozzle_val, buf);
+    set_text(tb->bed ? s_d.bed_val : s_d.nozzle_val, buf);
 }
 
 static void fan_released(lv_event_t *e)
@@ -681,7 +714,7 @@ static void fan_changed(lv_event_t *e)
 {
     char buf[16];
     snprintf(buf, sizeof(buf), "%d%%", (int)lv_slider_get_value(s_d.fan_slider));
-    lv_label_set_text(s_d.fan_val, buf);
+    set_text(s_d.fan_val, buf);
     s_d.fan_edit_ms = now_ms();
 }
 
@@ -724,7 +757,7 @@ static void build_detail(void)
 {
     detail_t *d = &s_d;
     d->scr = lv_obj_create(NULL);
-    lv_obj_set_style_bg_color(d->scr, C_BG, 0);
+    set_bg_color(d->scr, C_BG);
     lv_obj_remove_flag(d->scr, LV_OBJ_FLAG_SCROLLABLE);
 
     lv_obj_t *back = mk_btn(d->scr, LV_SYMBOL_LEFT " 返回", C_CARD, 120, 44, back_clicked, NULL, NULL);
@@ -740,7 +773,7 @@ static void build_detail(void)
     lv_obj_t *l = mk_panel(d->scr, 12, 64, 520, 524);
     for (int i = 0; i < printers_count() && i < PRINTER_MAX; i++) {
         build_camview(&d->cam[i], l, i, 0, 0, 120);
-        lv_obj_add_flag(d->cam[i].box, LV_OBJ_FLAG_HIDDEN);
+        set_hidden(d->cam[i].box, true);
     }
     int y = CAMERA_VIEW_H + 8;   // 278
     d->file = mk_label(l, FONT_S, C_TEXT, "");
@@ -782,7 +815,7 @@ static void build_detail(void)
     lv_obj_set_pos(d->speed_btns, 96, 76);
     lv_obj_set_style_text_font(d->speed_btns, FONT_S, 0);
     lv_obj_set_style_bg_opa(d->speed_btns, LV_OPA_TRANSP, 0);
-    lv_obj_set_style_border_width(d->speed_btns, 0, 0);
+    set_border_width(d->speed_btns, 0);
     lv_obj_set_style_pad_all(d->speed_btns, 0, 0);
     lv_obj_set_style_pad_column(d->speed_btns, 6, 0);
     lv_obj_set_style_bg_color(d->speed_btns, C_CARD2, LV_PART_ITEMS);
@@ -834,10 +867,10 @@ static void show_detail(int idx)
     if (!cfg) return;
     s_detail_idx = idx;
     char nm[48];
-    lv_label_set_text(s_d.title, printer_display_name(idx, nm, sizeof(nm)));
+    set_text(s_d.title, printer_display_name(idx, nm, sizeof(nm)));
     for (int i = 0; i < printers_count() && i < PRINTER_MAX; i++) {
-        if (i == idx) lv_obj_remove_flag(s_d.cam[i].box, LV_OBJ_FLAG_HIDDEN);
-        else lv_obj_add_flag(s_d.cam[i].box, LV_OBJ_FLAG_HIDDEN);
+        if (i == idx) set_hidden(s_d.cam[i].box, false);
+        else set_hidden(s_d.cam[i].box, true);
     }
     set_status("", C_MUTED);
     s_d.nozzle_edit.edit_ms = s_d.bed_edit.edit_ms = 0;
@@ -889,17 +922,17 @@ static void update_detail(const printer_snapshot_t *s)
 
     char nm[48];
     printer_display_name(s_detail_idx, nm, sizeof(nm));
-    if (strcmp(lv_label_get_text(d->title), nm) != 0) lv_label_set_text(d->title, nm);
+    if (strcmp(lv_label_get_text(d->title), nm) != 0) set_text(d->title, nm);
     set_badge(d->state, s);
     snprintf(buf, sizeof(buf), "%s · %s", printer_link_name(s->link), cfg->host[0] ? cfg->host : "-");
-    lv_label_set_text(d->link, buf);
+    set_text(d->link, buf);
     lv_obj_align_to(d->link, d->state, LV_ALIGN_OUT_LEFT_MID, -16, 0);
 
     update_camview(&d->cam[s_detail_idx], s_detail_idx, has, st->percent);
-    lv_label_set_text(d->file, has ? task_name(st) : "");
+    set_text(d->file, has ? task_name(st) : "");
     if (has) snprintf(buf, sizeof(buf), "%d%%", st->percent);
     else buf[0] = '\0';
-    lv_label_set_text(d->pct, buf);
+    set_text(d->pct, buf);
     update_bar(d->bar, st, has);
 
     fmt_start(t, sizeof(t), st);
@@ -925,8 +958,8 @@ static void update_detail(const printer_snapshot_t *s)
 
     lv_color_t col;
     fmt_note(buf, sizeof(buf), s, &col);
-    lv_label_set_text(d->note, buf);
-    lv_obj_set_style_text_color(d->note, col, 0);
+    set_text(d->note, buf);
+    set_text_color(d->note, col);
 
     // 控件可用性
     for (int i = 0; i < d->ctrl_count; i++) set_enabled(d->ctrl_widgets[i], has);
@@ -935,8 +968,8 @@ static void update_detail(const printer_snapshot_t *s)
     set_enabled(d->btn_pause, can_pause);
     set_enabled(d->btn_stop, active);
     set_enabled(d->speed_btns, active);
-    lv_label_set_text(d->btn_pause_lbl, st->gcode_state == BBL_GS_PAUSE ? LV_SYMBOL_PLAY " 继续" : LV_SYMBOL_PAUSE " 暂停");
-    lv_obj_set_style_bg_color(d->btn_pause, st->gcode_state == BBL_GS_PAUSE ? C_GREEN : C_BLUE, 0);
+    set_text(d->btn_pause_lbl, st->gcode_state == BBL_GS_PAUSE ? LV_SYMBOL_PLAY " 继续" : LV_SYMBOL_PAUSE " 暂停");
+    set_bg_color(d->btn_pause, st->gcode_state == BBL_GS_PAUSE ? C_GREEN : C_BLUE);
 
     if (!has) return;
 
@@ -946,17 +979,17 @@ static void update_detail(const printer_snapshot_t *s)
     if (!d->nozzle_edit.pending && !recently_edited(d->nozzle_edit.edit_ms, tnow)) {
         d->nozzle_edit.value = (int)(st->nozzle_target + 0.5f);
         snprintf(buf, sizeof(buf), "%d°C", d->nozzle_edit.value);
-        lv_label_set_text(d->nozzle_val, buf);
+        set_text(d->nozzle_val, buf);
     }
     if (!d->bed_edit.pending && !recently_edited(d->bed_edit.edit_ms, tnow)) {
         d->bed_edit.value = (int)(st->bed_target + 0.5f);
         snprintf(buf, sizeof(buf), "%d°C", d->bed_edit.value);
-        lv_label_set_text(d->bed_val, buf);
+        set_text(d->bed_val, buf);
     }
     if (!recently_edited(d->fan_edit_ms, tnow) && !lv_obj_has_state(d->fan_slider, LV_STATE_PRESSED)) {
         lv_slider_set_value(d->fan_slider, st->part_fan_pct, LV_ANIM_OFF);
         snprintf(buf, sizeof(buf), "%d%%", st->part_fan_pct);
-        lv_label_set_text(d->fan_val, buf);
+        set_text(d->fan_val, buf);
     }
     if (!recently_edited(d->light_edit_ms, tnow)) {
         set_enabled(d->light_sw, st->has_light);
@@ -964,7 +997,8 @@ static void update_detail(const printer_snapshot_t *s)
         else lv_obj_remove_state(d->light_sw, LV_STATE_CHECKED);
     }
     if (!recently_edited(d->speed_edit_ms, tnow) && st->speed_level >= 1 && st->speed_level <= 4) {
-        lv_buttonmatrix_set_button_ctrl(d->speed_btns, st->speed_level - 1, LV_BUTTONMATRIX_CTRL_CHECKED);
+        if (!lv_buttonmatrix_has_button_ctrl(d->speed_btns, st->speed_level - 1, LV_BUTTONMATRIX_CTRL_CHECKED))
+            lv_buttonmatrix_set_button_ctrl(d->speed_btns, st->speed_level - 1, LV_BUTTONMATRIX_CTRL_CHECKED);
     }
 
     // 命令回执
@@ -998,7 +1032,7 @@ static void refresh_cb(lv_timer_t *t)
         struct tm tm;
         localtime_r(&now, &tm);
         snprintf(buf, sizeof(buf), "%02d:%02d", tm.tm_hour, tm.tm_min);
-        lv_label_set_text(s_clock, buf);
+        set_text(s_clock, buf);
     }
     if (tick % 20 == 1) {   // Wi-Fi 信号查询要经 SDIO 问 C6，降低频率
         switch (net_state()) {
@@ -1007,7 +1041,7 @@ static void refresh_cb(lv_timer_t *t)
         case NET_DISCONNECTED: snprintf(wifi_txt, sizeof(wifi_txt), LV_SYMBOL_WIFI " 已断开"); break;
         case NET_CONNECTED: snprintf(wifi_txt, sizeof(wifi_txt), LV_SYMBOL_WIFI " %d dBm", net_rssi()); break;
         }
-        lv_label_set_text(s_wifi, wifi_txt);
+        set_text(s_wifi, wifi_txt);
         lv_obj_align_to(s_wifi, s_clock, LV_ALIGN_OUT_LEFT_MID, -20, 2);
     }
 

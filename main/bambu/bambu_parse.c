@@ -152,28 +152,39 @@ static bool parse_ams(bbl_status_t *s, const cJSON *ams)
     }
     const cJSON *trays = cJSON_GetObjectItemCaseSensitive(unit, "tray");
     if (!cJSON_IsArray(trays)) return ch;
-    int n = 0;
+    // 增量合并：A1 只发变化的字段；按 "id" 定位料位。只有 "id" 一个键的条目表示该料位为空
+    int n = s->ams_trays;
     const cJSON *t;
+    int pos = 0;
     cJSON_ArrayForEach(t, trays) {
-        if (n >= 4) break;
-        bbl_tray_t nt;
-        memset(&nt, 0, sizeof(nt));
-        nt.remain = -1;
+        int id = pos++;
+        if (get_number(t, "id", &v)) id = (int)v;
+        if (id < 0 || id >= 4) continue;
+        bbl_tray_t nt = s->tray[id];
+        if (id >= s->ams_trays) {
+            memset(&nt, 0, sizeof(nt));
+            nt.remain = -1;
+        }
+        if (cJSON_GetArraySize(t) == 1) {
+            memset(&nt, 0, sizeof(nt));
+            nt.remain = -1;
+        }
         const cJSON *type = cJSON_GetObjectItemCaseSensitive(t, "tray_type");
-        const cJSON *col = cJSON_GetObjectItemCaseSensitive(t, "tray_color");
-        if (cJSON_IsString(type) && type->valuestring[0]) {
-            nt.loaded = true;
+        if (cJSON_IsString(type)) {
+            nt.loaded = type->valuestring[0] != 0;
+            memset(nt.type, 0, sizeof(nt.type));
             strncpy(nt.type, type->valuestring, sizeof(nt.type) - 1);
         }
+        const cJSON *col = cJSON_GetObjectItemCaseSensitive(t, "tray_color");
         if (cJSON_IsString(col) && strlen(col->valuestring) >= 6) {
             nt.color = (uint32_t)(strtoul(col->valuestring, NULL, 16) >> (strlen(col->valuestring) >= 8 ? 8 : 0));
         }
         if (get_number(t, "remain", &v)) nt.remain = (int)v;
-        if (memcmp(&nt, &s->tray[n], sizeof(nt)) != 0) {
-            s->tray[n] = nt;
+        if (memcmp(&nt, &s->tray[id], sizeof(nt)) != 0) {
+            s->tray[id] = nt;
             ch = true;
         }
-        n++;
+        if (id + 1 > n) n = id + 1;
     }
     if (n != s->ams_trays) {
         s->ams_trays = n;

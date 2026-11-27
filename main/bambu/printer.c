@@ -39,6 +39,7 @@ typedef struct {
     uint32_t seq;
     int64_t last_pushall_us;
     bool started;
+    bool ams_logged;
 } printer_t;
 
 static printer_t s_printers[PRINTER_MAX];
@@ -86,6 +87,15 @@ static void send_pushall(printer_t *p)
 
 static void handle_message(printer_t *p)
 {
+    // 调试：每次连上后把第一份完整的 AMS 数据打一遍日志，方便核对不同打印机/AMS 的格式
+    if (!p->ams_logged) {
+        const char *a = memmem(p->rx_buf, p->rx_len, "\"ams\":{", 7);
+        if (a) {
+            p->ams_logged = true;
+            int n = (int)(p->rx_len - (a - p->rx_buf));
+            ESP_LOGI(TAG, "[%s] ams: %.*s", p->cfg.name, n > 1800 ? 1800 : n, a);
+        }
+    }
     xSemaphoreTake(p->lock, portMAX_DELAY);
     bbl_parse_report(&p->snap.st, p->rx_buf, p->rx_len);
     p->snap.rx_count++;
@@ -108,6 +118,7 @@ static void mqtt_event_handler(void *arg, esp_event_base_t base, int32_t event_i
 
     case MQTT_EVENT_CONNECTED:
         ESP_LOGI(TAG, "[%s] MQTT connected", p->cfg.name);
+        p->ams_logged = false;
         set_link(p, PRINTER_LINK_ONLINE);
         esp_mqtt_client_subscribe(p->client, p->topic_report, 0);
         send_pushall(p);

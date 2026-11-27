@@ -65,6 +65,13 @@ int main(void)
     assert(s.start_time == 1681479206);
     assert(s.tray_now == 2 && s.ams_trays == 4);   // 只有 tray_now 的增量不清空料位
 
+    // 料位增量：只带 remain 的条目不能把材料清掉；只有 id 的条目表示空料位
+    PARSE(&s, "{\"print\":{\"ams\":{\"ams\":[{\"id\":\"0\",\"tray\":[{\"id\":\"1\",\"remain\":50},{\"id\":\"2\"}]}]}}}");
+    assert(s.ams_trays == 4);
+    assert(s.tray[1].loaded && !strcmp(s.tray[1].type, "PLA") && s.tray[1].remain == 50 && s.tray[1].color == 0xFFF144);
+    assert(!s.tray[2].loaded);
+    assert(s.tray[3].loaded);
+
     // 3. 重复帧：没有变化
     assert(!PARSE(&s, "{\"print\":{\"mc_percent\":42,\"command\":\"push_status\"}}"));
 
