@@ -28,7 +28,8 @@ typedef enum {
 } bbl_speed_t;
 
 typedef struct {
-    bool loaded;
+    bool present;     // 有料盘（tray_exist_bits / 条目带字段）
+    bool loaded;      // 知道耗材类型；有料盘但没设置类型时显示“未知”
     uint32_t color;   // RRGGBB
     char type[12];    // PLA / PETG ...
     int remain;       // 余量 %，-1 未知
@@ -60,6 +61,7 @@ typedef struct {
     int ams_trays;        // 0 表示没有 AMS
     bbl_tray_t tray[4];
     int tray_now;         // 当前料位 0..3；254 外挂料盘；255 无
+    bbl_tray_t vt;        // 外挂料盘（vt_tray）
 
     // 授权控制：为 true 表示打印机要求签名命令（未开开发者模式），第三方只能读
     bool signature_required;

@@ -11,7 +11,7 @@
 #include "sdkconfig.h"
 #endif
 #ifndef CONFIG_BBL_PAGE_ANIM_MS
-#define CONFIG_BBL_PAGE_ANIM_MS 200
+#define CONFIG_BBL_PAGE_ANIM_MS 0
 #endif
 
 #include "camera.h"
@@ -38,7 +38,7 @@
 
 #define EDIT_HOLD_MS 4000   // 用户刚改过的控件，这段时间内不被打印机回报覆盖
 #define TEMP_SEND_DELAY_MS 900
-#define AMS_SLOTS 4
+#define AMS_SLOTS 5   // 4 个 AMS 料位 + 外挂料盘
 
 static int64_t now_ms(void) { return esp_timer_get_time() / 1000; }
 
@@ -263,9 +263,10 @@ static void build_ams_row(ams_row_t *a, lv_obj_t *parent, int x, int y, int w)
 {
     a->row = mk_box(parent, x, y, w, 32, C_CARD, 0);
     lv_obj_set_style_bg_opa(a->row, LV_OPA_TRANSP, 0);
-    int cw = (w - 3 * 8) / AMS_SLOTS;
+    // 外挂料盘和 AMS 之间多空 8px
+    int cw = (w - AMS_SLOTS * 8) / AMS_SLOTS;
     for (int i = 0; i < AMS_SLOTS; i++) {
-        lv_obj_t *c = mk_box(a->row, i * (cw + 8), 0, cw, 32, C_CARD2, 8);
+        lv_obj_t *c = mk_box(a->row, i * (cw + 8) + (i == AMS_SLOTS - 1 ? 8 : 0), 0, cw, 32, C_CARD2, 8);
         lv_obj_set_style_border_color(c, C_TEXT, 0);
         set_border_width(c, 0);
         a->chip[i] = c;
@@ -280,40 +281,44 @@ static void build_ams_row(ams_row_t *a, lv_obj_t *parent, int x, int y, int w)
     }
 }
 
+static void update_ams_chip(ams_row_t *a, int i, const bbl_tray_t *t, bool active)
+{
+    set_hidden(a->chip[i], false);
+    set_border_width(a->chip[i], active ? 2 : 0);
+    const char *txt;
+    if (t->loaded) {
+        set_bg_color(a->swatch[i], lv_color_hex(t->color));
+        txt = t->type;
+    } else {
+        set_bg_color(a->swatch[i], C_CARD);
+        txt = t->present ? "未知" : "空";   // 有料盘但没设置耗材类型
+    }
+    set_text(a->txt[i], txt);
+    set_text_color(a->txt[i], t->loaded ? C_TEXT : C_MUTED);
+    // 余量未知（没有 RFID 的料盘通常是 -1）就不画
+    if (t->loaded && t->remain >= 0) {
+        set_hidden(a->remain[i], false);
+        lv_bar_set_value(a->remain[i], t->remain, LV_ANIM_OFF);
+        lv_obj_set_style_bg_color(a->remain[i], t->remain < 15 ? C_WARN : C_TEAL, LV_PART_INDICATOR);
+    } else {
+        set_hidden(a->remain[i], true);
+    }
+}
+
 static void update_ams_row(ams_row_t *a, const bbl_status_t *st, bool has)
 {
-    if (!has || st->ams_trays <= 0) {
+    if (!has || (st->ams_trays <= 0 && !st->vt.loaded)) {
         set_hidden(a->row, true);
         return;
     }
     set_hidden(a->row, false);
-    char buf[24];
-    for (int i = 0; i < AMS_SLOTS; i++) {
-        if (i >= st->ams_trays) {
-            set_hidden(a->chip[i], true);
-            continue;
-        }
-        set_hidden(a->chip[i], false);
-        const bbl_tray_t *t = &st->tray[i];
-        set_border_width(a->chip[i], st->tray_now == i ? 2 : 0);
-        if (t->loaded) {
-            set_bg_color(a->swatch[i], lv_color_hex(t->color));
-            snprintf(buf, sizeof(buf), "%s", t->type);
-        } else {
-            set_bg_color(a->swatch[i], C_CARD);
-            snprintf(buf, sizeof(buf), "空");
-        }
-        set_text(a->txt[i], buf);
-        set_text_color(a->txt[i], t->loaded ? C_TEXT : C_MUTED);
-        // 余量未知（没有 RFID 的料盘通常是 -1）就不画
-        if (t->loaded && t->remain >= 0) {
-            set_hidden(a->remain[i], false);
-            lv_bar_set_value(a->remain[i], t->remain, LV_ANIM_OFF);
-            lv_obj_set_style_bg_color(a->remain[i], t->remain < 15 ? C_WARN : C_TEAL, LV_PART_INDICATOR);
-        } else {
-            set_hidden(a->remain[i], true);
-        }
+    for (int i = 0; i < AMS_SLOTS - 1; i++) {
+        if (i >= st->ams_trays) set_hidden(a->chip[i], true);
+        else update_ams_chip(a, i, &st->tray[i], st->tray_now == i);
     }
+    int e = AMS_SLOTS - 1;
+    if (st->vt.loaded) update_ams_chip(a, e, &st->vt, st->tray_now == 254);
+    else set_hidden(a->chip[e], true);
 }
 
 static void fmt_duration(char *buf, size_t n, int minutes)

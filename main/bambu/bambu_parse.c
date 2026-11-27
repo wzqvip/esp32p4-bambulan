@@ -15,6 +15,7 @@ void bbl_status_init(bbl_status_t *s)
 {
     memset(s, 0, sizeof(*s));
     s->tray_now = 255;
+    s->vt.remain = -1;
     s->speed_level = BBL_SPEED_STANDARD;
     s->speed_mag = 100;
 }
@@ -132,6 +133,33 @@ static bool parse_command_result(bbl_status_t *s, const cJSON *sect)
     return true;
 }
 
+// 把一个料盘条目里出现的字段合并进 t（只发变化字段时其余保持不变）
+static void merge_tray(bbl_tray_t *t, const cJSON *j)
+{
+    double v;
+    const cJSON *type = cJSON_GetObjectItemCaseSensitive(j, "tray_type");
+    if (cJSON_IsString(type)) {
+        t->loaded = type->valuestring[0] != 0;
+        memset(t->type, 0, sizeof(t->type));
+        strncpy(t->type, type->valuestring, sizeof(t->type) - 1);
+    }
+    const cJSON *col = cJSON_GetObjectItemCaseSensitive(j, "tray_color");
+    if (cJSON_IsString(col) && strlen(col->valuestring) >= 6) {
+        t->color = (uint32_t)(strtoul(col->valuestring, NULL, 16) >> (strlen(col->valuestring) >= 8 ? 8 : 0));
+    }
+    if (get_number(j, "remain", &v)) t->remain = (int)v;
+}
+
+static bool parse_vt_tray(bbl_status_t *s, const cJSON *j)
+{
+    bbl_tray_t nt = s->vt;
+    merge_tray(&nt, j);
+    nt.present = nt.loaded;
+    if (memcmp(&nt, &s->vt, sizeof(nt)) == 0) return false;
+    s->vt = nt;
+    return true;
+}
+
 static bool parse_ams(bbl_status_t *s, const cJSON *ams)
 {
     bool ch = false;
@@ -169,17 +197,8 @@ static bool parse_ams(bbl_status_t *s, const cJSON *ams)
             memset(&nt, 0, sizeof(nt));
             nt.remain = -1;
         }
-        const cJSON *type = cJSON_GetObjectItemCaseSensitive(t, "tray_type");
-        if (cJSON_IsString(type)) {
-            nt.loaded = type->valuestring[0] != 0;
-            memset(nt.type, 0, sizeof(nt.type));
-            strncpy(nt.type, type->valuestring, sizeof(nt.type) - 1);
-        }
-        const cJSON *col = cJSON_GetObjectItemCaseSensitive(t, "tray_color");
-        if (cJSON_IsString(col) && strlen(col->valuestring) >= 6) {
-            nt.color = (uint32_t)(strtoul(col->valuestring, NULL, 16) >> (strlen(col->valuestring) >= 8 ? 8 : 0));
-        }
-        if (get_number(t, "remain", &v)) nt.remain = (int)v;
+        if (cJSON_GetArraySize(t) > 1) nt.present = true;
+        merge_tray(&nt, t);
         if (memcmp(&nt, &s->tray[id], sizeof(nt)) != 0) {
             s->tray[id] = nt;
             ch = true;
@@ -189,6 +208,18 @@ static bool parse_ams(bbl_status_t *s, const cJSON *ams)
     if (n != s->ams_trays) {
         s->ams_trays = n;
         ch = true;
+    }
+    // tray_exist_bits（十六进制，bit i = 第 i 个料位有料盘）比条目本身更可靠
+    const cJSON *bits = cJSON_GetObjectItemCaseSensitive(ams, "tray_exist_bits");
+    if (cJSON_IsString(bits)) {
+        unsigned long b = strtoul(bits->valuestring, NULL, 16);
+        for (int i = 0; i < s->ams_trays; i++) {
+            bool p = (b >> i) & 1;
+            if (p != s->tray[i].present) {
+                s->tray[i].present = p;
+                ch = true;
+            }
+        }
     }
     return ch;
 }
@@ -273,6 +304,8 @@ static bool parse_print(bbl_status_t *s, const cJSON *p)
 
     const cJSON *ams = cJSON_GetObjectItemCaseSensitive(p, "ams");
     if (cJSON_IsObject(ams)) ch |= parse_ams(s, ams);
+    const cJSON *vt = cJSON_GetObjectItemCaseSensitive(p, "vt_tray");
+    if (cJSON_IsObject(vt)) ch |= parse_vt_tray(s, vt);
 
     bool sig_before = s->signature_required;
     upd_str(p, "fun", s->fun, sizeof(s->fun));

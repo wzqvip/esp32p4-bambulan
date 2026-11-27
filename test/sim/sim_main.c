@@ -232,6 +232,12 @@ int main(void)
     b->has_light = true;
     b->signature_required = true;
     strcpy(b->subtask, "Benchy");
+    // 塔可的A1 实测：0、2 号有料盘但没设置类型；外挂 PETG
+    b->ams_trays = 4;
+    b->tray[0].present = b->tray[2].present = true;
+    b->vt.loaded = b->vt.present = true;
+    strcpy(b->vt.type, "PETG");
+    b->vt.color = 0x5A657B;
 
     ui_init();
     fake_camera_frame();

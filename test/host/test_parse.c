@@ -72,6 +72,20 @@ int main(void)
     assert(!s.tray[2].loaded);
     assert(s.tray[3].loaded);
 
+    // 塔可的A1 实测：有料盘但没设置类型（tray_exist_bits=5）→ present 但不 loaded；外挂料盘 vt_tray
+    {
+        bbl_status_t t;
+        bbl_status_init(&t);
+        assert(PARSE(&t, "{\"print\":{\"ams\":{\"ams\":[{\"id\":\"0\",\"tray\":[{\"id\":\"0\",\"remain\":0,\"tray_type\":\"\",\"tray_color\":\"00000000\"},{\"id\":\"1\"},{\"id\":\"2\",\"remain\":0,\"tray_type\":\"\",\"tray_color\":\"00000000\"},{\"id\":\"3\"}]}],\"tray_exist_bits\":\"5\",\"tray_now\":\"255\"},\"vt_tray\":{\"id\":\"254\",\"tray_type\":\"PETG\",\"tray_color\":\"5A657BFF\"},\"command\":\"push_status\"}}"));
+        assert(t.ams_trays == 4);
+        assert(t.tray[0].present && !t.tray[0].loaded);
+        assert(!t.tray[1].present);
+        assert(t.tray[2].present && !t.tray[2].loaded);
+        assert(!t.tray[3].present);
+        assert(t.vt.loaded && !strcmp(t.vt.type, "PETG") && t.vt.color == 0x5A657B && t.vt.remain == -1);
+        assert(!PARSE(&t, "{\"print\":{\"vt_tray\":{\"id\":\"254\",\"tray_type\":\"PETG\"},\"command\":\"push_status\"}}"));
+    }
+
     // 3. 重复帧：没有变化
     assert(!PARSE(&s, "{\"print\":{\"mc_percent\":42,\"command\":\"push_status\"}}"));
 

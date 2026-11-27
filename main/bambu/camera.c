@@ -8,6 +8,7 @@
 #include "driver/ppa.h"
 #include "esp_heap_caps.h"
 #include "esp_log.h"
+#include "esp_timer.h"
 #include "esp_lvgl_port.h"
 #include "esp_tls.h"
 #include "freertos/FreeRTOS.h"
@@ -35,6 +36,10 @@ typedef struct {
     int idx;
     volatile camera_state_t state;
     uint8_t *jpeg;            // 由 jpeg_alloc_decoder_mem 分配（DMA 对齐）
+#if CONFIG_BBL_DEBUG_PERF
+    int dbg_frames;
+    int64_t dbg_t0;
+#endif
     uint8_t *frame[2];        // 缩放后的 RGB565，双缓冲
     int front;
     bool has_frame;
@@ -231,9 +236,23 @@ static void cam_task(void *arg)
                     got_any = true;
                     fails = 0;
                     if (c->jpeg[0] != 0xFF || c->jpeg[1] != 0xD8) continue;
+#if CONFIG_BBL_DEBUG_PERF
+                    if (++c->dbg_frames, esp_timer_get_time() - c->dbg_t0 > 10000000) {
+                        ESP_LOGI(TAG, "[%d] %.2f fps, last jpeg %lu bytes", c->idx,
+                                 c->dbg_frames * 1e6 / (esp_timer_get_time() - c->dbg_t0), (unsigned long)size);
+                        c->dbg_frames = 0;
+                        c->dbg_t0 = esp_timer_get_time();
+                    }
+#endif
+#if CONFIG_BBL_DEBUG_CAMERA_MODE == 1
+                    c->state = CAMERA_STREAMING;
+                    continue;
+#endif
                     if (decode_frame(c, size, c->frame[c->front ^ 1])) {
                         c->state = CAMERA_STREAMING;
+#if CONFIG_BBL_DEBUG_CAMERA_MODE != 2
                         present(c);
+#endif
                     } else {
                         c->state = CAMERA_DECODE_FAILED;
                     }

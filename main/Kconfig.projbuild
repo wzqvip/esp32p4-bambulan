@@ -70,7 +70,10 @@ menu "拓竹屏配置 (Bambu screen)"
         config BBL_PAGE_ANIM_MS
             int "切页动画时长 (ms，0 = 直接切换)"
             range 0 1000
-            default 200
+            default 0
+            help
+                滑动动画每帧都要整屏重画（实测约 35~50ms 一帧，只有 18~23fps），
+                所以默认直接切换（一帧，约 40~60ms）。想要滑动效果可以设成 200。
 
         config BBL_DEBUG_PERF
             bool "串口打印渲染耗时和帧率"
@@ -86,6 +89,14 @@ menu "拓竹屏配置 (Bambu screen)"
         config BBL_DEBUG_NO_CAMERA
             bool "不连接摄像头（排查闪烁用）"
             default n
+
+        config BBL_DEBUG_CAMERA_MODE
+            int "摄像头调试模式：0 正常，1 只收不解码，2 解码但不上屏"
+            range 0 2
+            default 0
+            depends on !BBL_DEBUG_NO_CAMERA
+            help
+                排查闪烁用：分别对应 Wi-Fi 收流 / 硬件 JPEG+PPA / LVGL 重画 三段负载。
     endmenu
 
 endmenu
