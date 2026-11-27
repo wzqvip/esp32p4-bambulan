@@ -7,6 +7,12 @@
 #include <time.h>
 
 #include "esp_timer.h"
+#if __has_include("sdkconfig.h")
+#include "sdkconfig.h"
+#endif
+#ifndef CONFIG_BBL_PAGE_ANIM_MS
+#define CONFIG_BBL_PAGE_ANIM_MS 200
+#endif
 
 #include "camera.h"
 #include "cover.h"
@@ -593,7 +599,7 @@ static void build_overview(void)
 static void back_clicked(lv_event_t *e)
 {
     s_detail_idx = -1;
-    lv_screen_load_anim(s_overview, LV_SCR_LOAD_ANIM_MOVE_RIGHT, 200, 0, false);
+    lv_screen_load_anim(s_overview, LV_SCR_LOAD_ANIM_MOVE_RIGHT, CONFIG_BBL_PAGE_ANIM_MS, 0, false);
 }
 
 static void set_status(const char *txt, lv_color_t color)
@@ -878,7 +884,7 @@ static void show_detail(int idx)
     s_d.fan_edit_ms = s_d.light_edit_ms = s_d.speed_edit_ms = 0;
     printer_snapshot_t s;
     if (printer_get(idx, &s)) s_d.last_result_seq = s.st.result_seq;
-    lv_screen_load_anim(s_d.scr, LV_SCR_LOAD_ANIM_MOVE_LEFT, 200, 0, false);
+    lv_screen_load_anim(s_d.scr, LV_SCR_LOAD_ANIM_MOVE_LEFT, CONFIG_BBL_PAGE_ANIM_MS, 0, false);
 }
 
 static const char *cmd_name(const char *cmd)
@@ -1064,4 +1070,16 @@ void ui_init(void)
     lv_screen_load(s_overview);
     refresh_cb(NULL);
     lv_timer_create(refresh_cb, 250, NULL);
+}
+
+void ui_debug_toggle_page(void)
+{
+    static int next;
+    if (lv_display_get_screen_prev(NULL)) return;   // 上一次动画还没结束
+    if (s_detail_idx >= 0) {
+        back_clicked(NULL);
+    } else {
+        show_detail(next);
+        next = (next + 1) % printers_count();
+    }
 }

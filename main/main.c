@@ -17,7 +17,9 @@ static const char *TAG = "main";
 static void on_network_ready(void)
 {
     printers_start();
+#if !CONFIG_BBL_DEBUG_NO_CAMERA
     camera_start_all();
+#endif
     cover_start_all();
     discover_start();
 }
@@ -37,6 +39,7 @@ void app_main(void)
     ESP_ERROR_CHECK(board_display_init(&disp));
     if (lvgl_port_lock(0)) {
         ui_init();
+        ui_debug_init(disp);
         lvgl_port_unlock();
     }
     board_set_backlight(CONFIG_BBL_BACKLIGHT_PERCENT);

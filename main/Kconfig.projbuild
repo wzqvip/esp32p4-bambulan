@@ -66,4 +66,26 @@ menu "拓竹屏配置 (Bambu screen)"
         range 5 100
         default 80
 
+    menu "调试 (Debug)"
+        config BBL_PAGE_ANIM_MS
+            int "切页动画时长 (ms，0 = 直接切换)"
+            range 0 1000
+            default 200
+
+        config BBL_DEBUG_PERF
+            bool "串口打印渲染耗时和帧率"
+            default n
+            help
+                每 5 秒打印一次平时的渲染统计；每次切页动画结束后打印这次动画的
+                帧数、帧率、每帧渲染/等待刷新耗时。
+
+        config BBL_DEBUG_PAGE_CYCLE
+            bool "自动在总览和详情页之间来回切换（每 3 秒）"
+            default n
+
+        config BBL_DEBUG_NO_CAMERA
+            bool "不连接摄像头（排查闪烁用）"
+            default n
+    endmenu
+
 endmenu
