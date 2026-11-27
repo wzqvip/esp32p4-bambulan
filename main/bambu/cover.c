@@ -22,6 +22,7 @@ static const char *TAG = "cover";
 #define FTP_PORT 990
 #define TAIL_LEN (64 * 1024)          // 读 3mf 末尾这么多字节找 ZIP 目录
 #define PNG_MAX (2 * 1024 * 1024)
+#define FILE_MAX (16 * 1024 * 1024)       // 3mf 超过这个大小就不取预览图
 #define POLL_MS 3000
 #define RETRY_MS 60000
 #define MAX_TRIES 3
@@ -217,8 +218,10 @@ static int ftp_read_range(ftp_t *f, const char *path, long off, size_t len, uint
         return -1;
     }
     int port = h[4] * 256 + h[5];
-    rc = ftp_cmd(f, "REST %ld", off);
-    FAIL_IF(rc != 350, "REST");
+    if (off > 0) {
+        rc = ftp_cmd(f, "REST %ld", off);
+        FAIL_IF(rc != 350, "REST");
+    }
 
     // 先发 RETR，再连数据端口：服务器接受连接、回 150 之后才开始数据通道的 TLS 握手
     char cmd[400];
@@ -248,8 +251,8 @@ static int ftp_read_range(ftp_t *f, const char *path, long off, size_t len, uint
     ESP_LOGI(TAG, "[%s] RETR @%ld: got %u/%u bytes", f->cfg->name, off, (unsigned)got, (unsigned)len);
     // 提前关闭数据连接时服务器回 426/451，读完到 EOF 时回 226，都算正常
     c = ftp_resp(f);
-    FAIL_IF(c < 0, "transfer reply");
-    ESP_LOGI(TAG, "[%s] transfer reply: %s", f->cfg->name, f->line);
+    if (c < 0) ESP_LOGW(TAG, "[%s] no transfer reply", f->cfg->name);   // 数据已读完就不算失败
+    else ESP_LOGI(TAG, "[%s] transfer reply: %s", f->cfg->name, f->line);
 #undef FAIL_IF
     return (int)got;
 }
@@ -345,6 +348,48 @@ static bool ends_with(const char *s, const char *suffix)
     return a >= b && strcasecmp(s + a - b, suffix) == 0;
 }
 
+extern const uint16_t gbk_table_count;
+extern const uint16_t gbk_table[][2];
+
+// UTF-8 -> GBK（打印机存储卡上的中文文件名是 GBK）。有无法转换的字符返回 false
+static bool utf8_to_gbk(const char *in, char *out, size_t cap)
+{
+    size_t n = 0;
+    const uint8_t *p = (const uint8_t *)in;
+    while (*p) {
+        uint32_t cp;
+        if (*p < 0x80) cp = *p++;
+        else if ((*p & 0xE0) == 0xC0 && p[1]) cp = (p[0] & 0x1F) << 6 | (p[1] & 0x3F), p += 2;
+        else if ((*p & 0xF0) == 0xE0 && p[1] && p[2]) cp = (p[0] & 0x0F) << 12 | (p[1] & 0x3F) << 6 | (p[2] & 0x3F), p += 3;
+        else return false;
+        if (cp < 0x80) {
+            if (n + 1 >= cap) return false;
+            out[n++] = (char)cp;
+            continue;
+        }
+        int lo = 0, hi = gbk_table_count - 1, hit = -1;
+        while (lo <= hi) {
+            int mid = (lo + hi) / 2;
+            if (gbk_table[mid][0] == cp) { hit = mid; break; }
+            if (gbk_table[mid][0] < cp) lo = mid + 1;
+            else hi = mid - 1;
+        }
+        if (hit < 0 || n + 2 >= cap) return false;
+        out[n++] = (char)(gbk_table[hit][1] >> 8);
+        out[n++] = (char)(gbk_table[hit][1] & 0xFF);
+    }
+    out[n] = '\0';
+    return true;
+}
+
+static bool has_non_ascii(const char *s)
+{
+    for (; *s; s++) {
+        if ((uint8_t)*s >= 0x80) return true;
+    }
+    return false;
+}
+
 // 按 ha-bambulab 的经验列出可能的 3mf 路径，返回第一个存在的
 static bool find_3mf(ftp_t *f, const bbl_status_t *st, char *path, size_t cap, long *size)
 {
@@ -372,6 +417,18 @@ static bool find_3mf(ftp_t *f, const bbl_status_t *st, char *path, size_t cap, l
         if (s > 0) {
             strlcpy(path, cand[i], cap);
             *size = s;
+            return true;
+        }
+    }
+    // 中文文件名：存储卡上是 GBK，再按 GBK 试一遍
+    for (int i = 0; i < nc; i++) {
+        char gbk[200];
+        if (!has_non_ascii(cand[i]) || !utf8_to_gbk(cand[i], gbk, sizeof(gbk))) continue;
+        long s = ftp_size(f, gbk);
+        if (s > 0) {
+            strlcpy(path, gbk, cap);
+            *size = s;
+            ESP_LOGI(TAG, "[%s] found GBK name for %s", f->cfg->name, cand[i]);
             return true;
         }
     }
@@ -429,58 +486,59 @@ static bool fetch_cover(cover_t *c, const bbl_status_t *st)
     if (!ftp_open(&f, cfg)) return false;
 
     bool ok = false;
-    uint8_t *tail = NULL, *blob = NULL, *png = NULL, *rgba = NULL;
-    char path[160];
+    uint8_t *file = NULL, *png = NULL, *rgba = NULL;
+    char path[200];
     long size = 0;
     if (!find_3mf(&f, st, path, sizeof(path), &size)) {
         ESP_LOGW(TAG, "[%s] 3mf not found for '%s' / '%s'", cfg->name, st->subtask, st->gcode_file);
         goto out;
     }
-    ESP_LOGI(TAG, "[%s] reading %s (%ld bytes)", cfg->name, path, size);
-
-    long tail_off = size > TAIL_LEN ? size - TAIL_LEN : 0;
-    size_t tail_len = size - tail_off;
-    tail = heap_caps_malloc(tail_len, MALLOC_CAP_SPIRAM);
-    if (!tail) goto out;
-    int tgot = ftp_read_range(&f, path, tail_off, tail_len, tail);
-    if (tgot != (int)tail_len) {
-        ESP_LOGW(TAG, "[%s] tail read %d/%u", cfg->name, tgot, (unsigned)tail_len);
+    if (size > FILE_MAX) {
+        ESP_LOGW(TAG, "[%s] %s is %ld bytes, too large for preview", cfg->name, path, size);
         goto out;
     }
+    // 打印机的 FTP 不支持 REST（回 502），也不能中途断开数据连接（会连控制连接一起断），
+    // 所以整个 3mf 读进 PSRAM 再找 ZIP 目录
+    ESP_LOGI(TAG, "[%s] reading %s (%ld bytes)", cfg->name, path, size);
+    file = heap_caps_malloc(size, MALLOC_CAP_SPIRAM);
+    if (!file) goto out;
+    int64_t t0 = esp_timer_get_time();
+    int got = ftp_read_range(&f, path, 0, size, file);
+    if (got != size) {
+        ESP_LOGW(TAG, "[%s] read %d/%ld", cfg->name, got, size);
+        goto out;
+    }
+    ESP_LOGI(TAG, "[%s] downloaded in %lld ms", cfg->name, (esp_timer_get_time() - t0) / 1000);
 
     uint64_t cd_off, cd_size;
-    if (!zip_locate_cd(tail, tail_len, tail_off, &cd_off, &cd_size) || cd_off < (uint64_t)tail_off ||
+    long tail_off = size > TAIL_LEN ? size - TAIL_LEN : 0;
+    if (!zip_locate_cd(file + tail_off, size - tail_off, tail_off, &cd_off, &cd_size) ||
         cd_off + cd_size > (uint64_t)size) {
-        ESP_LOGW(TAG, "[%s] ZIP directory not in last %d bytes", cfg->name, TAIL_LEN);
+        ESP_LOGW(TAG, "[%s] ZIP directory not found", cfg->name);
         goto out;
     }
     char want[40];
     snprintf(want, sizeof(want), "Metadata/plate_%d.png", plate_index(st));
     zip_entry_t z;
-    if (!zip_find(tail + (cd_off - tail_off), cd_size, want, &z)) {
+    if (!zip_find(file + cd_off, cd_size, want, &z)) {
         ESP_LOGW(TAG, "[%s] no plate preview in 3mf", cfg->name);
         goto out;
     }
     ESP_LOGI(TAG, "[%s] entry: method %u comp %llu uncomp %llu at %llu", cfg->name, z.method,
              (unsigned long long)z.comp, (unsigned long long)z.uncomp, (unsigned long long)z.local_off);
     if (z.comp == 0 || z.comp > PNG_MAX || z.uncomp > PNG_MAX || (z.method != 0 && z.method != 8)) goto out;
-
-    // 本地文件头 30 字节 + 文件名 + 扩展字段（长度未知，留 512 字节余量）
-    size_t want_len = 30 + 512 + z.comp;
-    blob = heap_caps_malloc(want_len, MALLOC_CAP_SPIRAM);
-    if (!blob) goto out;
-    int got = ftp_read_range(&f, path, (long)z.local_off, want_len, blob);
-    if (got < 30 || rd32(blob) != 0x04034b50) {
-        ESP_LOGW(TAG, "[%s] bad local header (got %d)", cfg->name, got);
+    if (z.local_off + 30 > (uint64_t)size || rd32(file + z.local_off) != 0x04034b50) {
+        ESP_LOGW(TAG, "[%s] bad local header", cfg->name);
         goto out;
     }
-    size_t data_off = 30 + rd16(blob + 26) + rd16(blob + 28);
-    if (data_off + z.comp > (size_t)got) {
-        ESP_LOGW(TAG, "[%s] entry truncated (got %d, need %u)", cfg->name, got, (unsigned)(data_off + z.comp));
+    const uint8_t *lh = file + z.local_off;
+    uint64_t data_off = z.local_off + 30 + rd16(lh + 26) + rd16(lh + 28);
+    if (data_off + z.comp > (uint64_t)size) {
+        ESP_LOGW(TAG, "[%s] entry truncated", cfg->name);
         goto out;
     }
 
-    const uint8_t *png_data = blob + data_off;
+    const uint8_t *png_data = file + data_off;
     size_t png_len = z.comp;
     if (z.method == 8) {
         size_t outsize = 0;
@@ -502,8 +560,7 @@ static bool fetch_cover(cover_t *c, const bbl_status_t *st)
     ok = true;
 out:
     ftp_close(&f);
-    free(tail);
-    free(blob);
+    free(file);
     lv_free(png);
     lv_free(rgba);
     if (ok) present(c, true);

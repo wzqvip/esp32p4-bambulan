@@ -1,7 +1,7 @@
 file(GLOB UI_SRCS "ui/*.c" "ui/fonts/*.c")
 idf_component_register(
     SRCS "main.c" "board.c" "net.c"
-         "bambu/bambu_parse.c" "bambu/bambu_cmd.c" "bambu/printer.c" "bambu/camera.c" "bambu/cover.c"
+         "bambu/bambu_parse.c" "bambu/bambu_cmd.c" "bambu/printer.c" "bambu/camera.c" "bambu/cover.c" "bambu/gbk_table.c"
          ${UI_SRCS}
     INCLUDE_DIRS "." "bambu" "ui"
     EMBED_TXTFILES "certs/bambu_ca.pem"
