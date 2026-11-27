@@ -436,7 +436,7 @@ static bool find_3mf(ftp_t *f, const bbl_status_t *st, char *path, size_t cap, l
 }
 
 // PNG(RGBA) 缩放到 COVER_SIZE 见方（等比，盒式滤波），写成 LVGL 的 ARGB8888（内存顺序 B G R A）
-static void scale_rgba(const uint8_t *src, unsigned w, unsigned h, uint8_t *dst)
+static void scale_rgba(const uint8_t *src, unsigned w, unsigned h, unsigned stride, uint8_t *dst)
 {
     memset(dst, 0, COVER_SIZE * COVER_SIZE * 4);
     unsigned big = w > h ? w : h;
@@ -450,7 +450,7 @@ static void scale_rgba(const uint8_t *src, unsigned w, unsigned h, uint8_t *dst)
             if (x1 <= x0) x1 = x0 + 1;
             uint32_t r = 0, g = 0, b = 0, a = 0, cnt = 0;
             for (unsigned sy = y0; sy < y1; sy++) {
-                const uint8_t *row = src + (size_t)sy * w * 4;
+                const uint8_t *row = src + (size_t)sy * stride;
                 for (unsigned sx = x0; sx < x1; sx++) {
                     const uint8_t *px = row + sx * 4;
                     // 按 alpha 加权，避免透明区域的颜色渗进边缘
@@ -486,7 +486,8 @@ static bool fetch_cover(cover_t *c, const bbl_status_t *st)
     if (!ftp_open(&f, cfg)) return false;
 
     bool ok = false;
-    uint8_t *file = NULL, *png = NULL, *rgba = NULL;
+    uint8_t *file = NULL, *png = NULL;
+    lv_draw_buf_t *img = NULL;
     char path[200];
     long size = 0;
     if (!find_3mf(&f, st, path, sizeof(path), &size)) {
@@ -551,18 +552,19 @@ static bool fetch_cover(cover_t *c, const bbl_status_t *st)
         png_len = outsize;
     }
     unsigned w, h;
-    if (lodepng_decode32(&rgba, &w, &h, png_data, png_len) != 0 || !w || !h) {
+    // 注意：LVGL 改过的 lodepng 输出的不是像素数组，而是 lv_draw_buf_t*（像素仍是 RGBA 字节序）
+    if (lodepng_decode32((unsigned char **)&img, &w, &h, png_data, png_len) != 0 || !img || !w || !h) {
         ESP_LOGW(TAG, "[%s] PNG decode failed", cfg->name);
         goto out;
     }
-    scale_rgba(rgba, w, h, c->buf[c->front ^ 1]);
+    scale_rgba(img->data, w, h, img->header.stride, c->buf[c->front ^ 1]);
     ESP_LOGI(TAG, "[%s] preview %ux%u ready", cfg->name, w, h);
     ok = true;
 out:
     ftp_close(&f);
     free(file);
     lv_free(png);
-    lv_free(rgba);
+    if (img) lv_draw_buf_destroy(img);
     if (ok) present(c, true);
     return ok;
 }
