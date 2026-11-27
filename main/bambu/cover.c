@@ -598,7 +598,9 @@ static void cover_task(void *arg)
         int64_t now = esp_timer_get_time() / 1000;
         if (tries >= MAX_TRIES || now < next_try) continue;
         tries++;
-        if (fetch_cover(c, st)) {
+        bool fetched = fetch_cover(c, st);
+        ESP_LOGI(TAG, "stack free: %u bytes", (unsigned)uxTaskGetStackHighWaterMark(NULL) * sizeof(StackType_t));
+        if (fetched) {
             snprintf(done_key, sizeof(done_key), "%s", key);
         } else {
             next_try = now + RETRY_MS;
@@ -629,6 +631,7 @@ void cover_start_all(void)
             ESP_LOGE(TAG, "no memory for cover %d", i);
             continue;
         }
-        xTaskCreatePinnedToCore(cover_task, "cover", 8192, c, 2, NULL, 0);
+        // 控制连接 + 数据连接各做一次 TLS 握手，嵌套较深，8K 栈会溢出写坏堆
+        xTaskCreatePinnedToCore(cover_task, "cover", 16384, c, 2, NULL, 0);
     }
 }
