@@ -171,7 +171,7 @@ esp_err_t board_display_init(lv_display_t **out_disp)
         .color_format = LV_COLOR_FORMAT_RGB565,
         .flags = {
             .buff_spiram = true,
-            .sw_rotate = false,
+            .sw_rotate = true,   // 不旋转；设为 true 避免 lvgl_port 调用面板不支持的 swap_xy
             .swap_bytes = LCD_SWAP_BYTES,
             .full_refresh = false,
             .direct_mode = true,
