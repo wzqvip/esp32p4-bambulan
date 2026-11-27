@@ -85,7 +85,7 @@ static esp_err_t touch_init(esp_lcd_touch_handle_t *out)
     };
     // GT911 复位时按 INT 电平选地址（0x5D 或 0x14），上电时序不稳时偶尔会落到另一个地址，
     // 所以两个地址轮流试几次
-    static const uint8_t addrs[] = {ESP_LCD_TOUCH_IO_I2C_GT911_ADDRESS, ESP_LCD_TOUCH_IO_I2C_GT911_ADDRESS_BACKUP};
+    static const uint8_t addrs[] = {ESP_LCD_TOUCH_IO_I2C_GT911_ADDRESS_BACKUP, ESP_LCD_TOUCH_IO_I2C_GT911_ADDRESS};   // 这块板实测在 0x14
     esp_err_t err = ESP_FAIL;
     for (int attempt = 0; attempt < 3 && err != ESP_OK; attempt++) {
         for (size_t a = 0; a < sizeof(addrs) && err != ESP_OK; a++) {
