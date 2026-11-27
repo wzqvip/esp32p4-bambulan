@@ -134,7 +134,11 @@ esp_err_t board_display_init(lv_display_t **out_disp)
         .dpi_clock_freq_mhz = 51,
         .virtual_channel = 0,
         .in_color_format = LCD_COLOR_FMT_RGB565,
+#if CONFIG_BBL_DISP_PARTIAL_1FB
+        .num_fbs = 1,
+#else
         .num_fbs = 2,
+#endif
         .video_timing = {
             .h_size = BOARD_LCD_H_RES,
             .v_size = BOARD_LCD_V_RES,
@@ -191,10 +195,19 @@ esp_err_t board_display_init(lv_display_t **out_disp)
             .sw_rotate = true,   // 不旋转；设为 true 避免 lvgl_port 调用面板不支持的 swap_xy
             .swap_bytes = LCD_SWAP_BYTES,
             .full_refresh = false,
+#if CONFIG_BBL_DISP_PARTIAL_1FB
+            .direct_mode = false,
+#else
             .direct_mode = true,
+#endif
         },
     };
+#if CONFIG_BBL_DISP_PARTIAL_1FB
+    // 官方例程的方式：LVGL 只画脏区域到 PSRAM 缓冲，再由 DMA2D 拷进唯一的帧缓冲
+    const lvgl_port_display_dsi_cfg_t dsi_cfg = {.flags.avoid_tearing = false};
+#else
     const lvgl_port_display_dsi_cfg_t dsi_cfg = {.flags.avoid_tearing = true};
+#endif
     lv_display_t *disp = lvgl_port_add_disp_dsi(&disp_cfg, &dsi_cfg);
     if (!disp) return ESP_FAIL;
 
