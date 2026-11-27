@@ -5,6 +5,7 @@
 #include <time.h>
 
 #include "camera.h"
+#include "cover.h"
 #include "lvgl.h"
 #include "net.h"
 #include "printer.h"
@@ -86,6 +87,36 @@ static void fake_camera_frame(void)
     s_frame_dsc.data = (const uint8_t *)s_frame;
     s_frame_dsc.data_size = sizeof(s_frame);
     for (int i = 0; i < s_cam_n[0]; i++) lv_image_set_src(s_cam_imgs[0][i], &s_frame_dsc);
+}
+
+
+// ---- 假预览图：一号机给一个“模型”剪影 ----
+static uint32_t s_cover[COVER_SIZE * COVER_SIZE];
+static lv_image_dsc_t s_cover_dsc;
+static lv_obj_t *s_cov_imgs[2][COVER_MAX_BIND];
+static int s_cov_n[2];
+void cover_bind_image(int idx, lv_obj_t *img)
+{
+    if (idx >= 0 && idx < 2 && s_cov_n[idx] < COVER_MAX_BIND) s_cov_imgs[idx][s_cov_n[idx]++] = img;
+}
+void cover_start_all(void) {}
+bool cover_has_image(int idx) { return idx == 0; }
+static void fake_cover(void)
+{
+    for (int y = 0; y < COVER_SIZE; y++)
+        for (int x = 0; x < COVER_SIZE; x++) {
+            int dx = x - 64, dy = y - 70;
+            bool body = dx * dx + dy * dy * 2 < 1500, head = (x - 84) * (x - 84) + (y - 40) * (y - 40) < 200;
+            s_cover[y * COVER_SIZE + x] = (body || head) ? 0xFF4CAF50u : 0;
+        }
+    s_cover_dsc.header.magic = LV_IMAGE_HEADER_MAGIC;
+    s_cover_dsc.header.cf = LV_COLOR_FORMAT_ARGB8888;
+    s_cover_dsc.header.w = COVER_SIZE;
+    s_cover_dsc.header.h = COVER_SIZE;
+    s_cover_dsc.header.stride = COVER_SIZE * 4;
+    s_cover_dsc.data = (const uint8_t *)s_cover;
+    s_cover_dsc.data_size = sizeof(s_cover);
+    for (int i = 0; i < s_cov_n[0]; i++) lv_image_set_src(s_cov_imgs[0][i], &s_cover_dsc);
 }
 
 // ---- 显示 + 触摸 ----
@@ -199,6 +230,7 @@ int main(void)
 
     ui_init();
     fake_camera_frame();
+    fake_cover();
     run(600);
     shot("overview");
 

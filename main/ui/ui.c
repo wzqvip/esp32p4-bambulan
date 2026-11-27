@@ -9,6 +9,7 @@
 #include "esp_timer.h"
 
 #include "camera.h"
+#include "cover.h"
 #include "net.h"
 #include "printer.h"
 
@@ -41,6 +42,7 @@ static bool recently_edited(int64_t edit_ms, int64_t t) { return edit_ms != 0 &&
 // ---------- 复用组件 ----------
 typedef struct {
     lv_obj_t *box, *img, *pct, *msg;   // 摄像头画面；没画面时显示大号进度和原因
+    lv_obj_t *cov_box, *cov_img;       // 左上角叠加的模型预览图
 } camview_t;
 
 typedef struct {
@@ -166,7 +168,7 @@ static lv_obj_t *mk_btn(lv_obj_t *parent, const char *txt, lv_color_t bg, int w,
 }
 
 // 摄像头画面框：黑底 + lv_image（由 camera 模块换帧）+ 没画面时的大号进度和提示
-static void build_camview(camview_t *v, lv_obj_t *parent, int idx, int x, int y)
+static void build_camview(camview_t *v, lv_obj_t *parent, int idx, int x, int y, int thumb)
 {
     v->box = mk_box(parent, x, y, CAMERA_VIEW_W, CAMERA_VIEW_H, C_BLACK, 10);
     lv_obj_set_style_clip_corner(v->box, true, 0);
@@ -183,10 +185,22 @@ static void build_camview(camview_t *v, lv_obj_t *parent, int idx, int x, int y)
     lv_obj_set_style_text_align(v->msg, LV_TEXT_ALIGN_CENTER, 0);
     lv_label_set_long_mode(v->msg, LV_LABEL_LONG_WRAP);
     lv_obj_align(v->msg, LV_ALIGN_BOTTOM_MID, 0, -16);
+
+    v->cov_box = mk_box(v->box, 8, 8, thumb + 8, thumb + 8, C_BLACK, 8);
+    lv_obj_set_style_bg_opa(v->cov_box, LV_OPA_60, 0);
+    v->cov_img = lv_image_create(v->cov_box);
+    lv_obj_set_size(v->cov_img, thumb, thumb);
+    lv_image_set_inner_align(v->cov_img, LV_IMAGE_ALIGN_STRETCH);
+    lv_obj_center(v->cov_img);
+    lv_obj_remove_flag(v->cov_img, LV_OBJ_FLAG_CLICKABLE);
+    lv_obj_add_flag(v->cov_box, LV_OBJ_FLAG_HIDDEN);
+    cover_bind_image(idx, v->cov_img);
 }
 
 static void update_camview(camview_t *v, int idx, bool has, int pct)
 {
+    if (cover_has_image(idx)) lv_obj_remove_flag(v->cov_box, LV_OBJ_FLAG_HIDDEN);
+    else lv_obj_add_flag(v->cov_box, LV_OBJ_FLAG_HIDDEN);
     camera_state_t cs = camera_state(idx);
     bool live = cs == CAMERA_STREAMING && camera_has_frame(idx);
     if (live) {
@@ -427,7 +441,7 @@ static void build_card(card_t *c, lv_obj_t *parent, int idx, int x)
     c->state = mk_badge(c->card);
     lv_obj_align(c->state, LV_ALIGN_TOP_RIGHT, -4, 3);
 
-    build_camview(&c->cam, c->card, idx, 0, 44);
+    build_camview(&c->cam, c->card, idx, 0, 44, 96);
 
     int y = 44 + CAMERA_VIEW_H + 8;   // 322
     c->file = mk_label(c->card, FONT_S, C_TEXT, "");
@@ -715,7 +729,7 @@ static void build_detail(void)
     // 左：实时画面 + 状态（面板 520 宽，内宽 480）
     lv_obj_t *l = mk_panel(d->scr, 12, 64, 520, 524);
     for (int i = 0; i < printers_count() && i < PRINTER_MAX; i++) {
-        build_camview(&d->cam[i], l, i, 0, 0);
+        build_camview(&d->cam[i], l, i, 0, 0, 120);
         lv_obj_add_flag(d->cam[i].box, LV_OBJ_FLAG_HIDDEN);
     }
     int y = CAMERA_VIEW_H + 8;   // 278

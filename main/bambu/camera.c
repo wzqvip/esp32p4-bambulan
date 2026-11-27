@@ -1,5 +1,6 @@
 #include "camera.h"
 
+#include <stdlib.h>
 #include <string.h>
 #include <sys/socket.h>
 
@@ -191,6 +192,14 @@ static void cam_task(void *arg)
     int fails = 0;
     uint8_t hdr[16], auth[80];
     build_auth(auth, cfg->access_code);
+
+    // 等 MQTT 先连上（最多 20 秒），避免几路 TLS 同时握手；打印机同时处理多个握手时容易超时
+    printer_snapshot_t *snap = heap_caps_malloc(sizeof(*snap), MALLOC_CAP_SPIRAM);
+    for (int i = 0; snap && i < 40; i++) {
+        if (printer_get(c->idx, snap) && snap->link == PRINTER_LINK_ONLINE) break;
+        vTaskDelay(pdMS_TO_TICKS(500));
+    }
+    free(snap);
 
     for (;;) {
         c->state = CAMERA_CONNECTING;
