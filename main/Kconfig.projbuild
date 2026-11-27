@@ -64,15 +64,18 @@ menu "拓竹屏配置 (Bambu screen)"
     config BBL_BACKLIGHT_PERCENT
         int "屏幕亮度 (%)"
         range 5 100
-        default 80
+        default 100
 
     choice BBL_DISP_MODE
         prompt "屏幕刷新方式"
-        default BBL_DISP_DIRECT_2FB
-        config BBL_DISP_DIRECT_2FB
-            bool "直接渲染到 2 块帧缓冲，vsync 切换（防撕裂）"
+        default BBL_DISP_PARTIAL_1FB
+        help
+            实测（V1.0 板）：2 块帧缓冲 + vsync 切换时整屏亮度有可见闪烁（约 ±3%），
+            局部渲染 + 1 块帧缓冲（官方例程的方式）不闪，也没有看到撕裂。
         config BBL_DISP_PARTIAL_1FB
-            bool "局部渲染 + 1 块帧缓冲（与 ELECROW 官方例程相同）"
+            bool "局部渲染 + 1 块帧缓冲（与 ELECROW 官方例程相同，推荐）"
+        config BBL_DISP_DIRECT_2FB
+            bool "直接渲染到 2 块帧缓冲，vsync 切换（这块屏上会闪）"
     endchoice
 
     menu "调试 (Debug)"
