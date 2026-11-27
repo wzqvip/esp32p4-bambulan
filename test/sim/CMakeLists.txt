@@ -1,0 +1,16 @@
+# 电脑上渲染界面截图：cmake -S test/sim -B build-sim -DLVGL_DIR=<lvgl v9.2.2 源码> && cmake --build build-sim && (cd build-sim && ./sim)
+cmake_minimum_required(VERSION 3.16)
+project(bambu_ui_sim C)
+set(LVGL_DIR "$ENV{HOME}/deps/lvgl" CACHE PATH "LVGL v9.2.x source")
+set(CJSON_DIR "$ENV{IDF_PATH}/components/json/cJSON" CACHE PATH "cJSON source")
+set(MAIN ${CMAKE_CURRENT_SOURCE_DIR}/../../main)
+
+file(GLOB_RECURSE LVGL_SRCS ${LVGL_DIR}/src/*.c)
+add_library(lvgl STATIC ${LVGL_SRCS})
+target_include_directories(lvgl PUBLIC ${LVGL_DIR} ${CMAKE_CURRENT_SOURCE_DIR})
+target_compile_definitions(lvgl PUBLIC LV_CONF_INCLUDE_SIMPLE)
+
+file(GLOB FONT_SRCS ${MAIN}/ui/fonts/*.c)
+add_executable(sim sim_main.c ${MAIN}/ui/ui.c ${FONT_SRCS} ${MAIN}/bambu/bambu_parse.c ${CJSON_DIR}/cJSON.c)
+target_include_directories(sim PRIVATE shim ${MAIN} ${MAIN}/bambu ${MAIN}/ui ${CJSON_DIR})
+target_link_libraries(sim lvgl m)

@@ -1,0 +1,181 @@
+// 在电脑上渲染界面截图（不需要板子），输出 build/*.ppm
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+#include <time.h>
+
+#include "lvgl.h"
+#include "net.h"
+#include "printer.h"
+#include "ui.h"
+
+static int64_t s_ms;
+int64_t esp_timer_get_time(void) { return s_ms * 1000; }
+
+// ---- 假打印机 ----
+static printer_cfg_t cfgs[2] = {{"A1 一号", "192.168.1.31", "03919A3B0100001", "12345678"},
+                                {"A1 二号", "192.168.1.32", "03919A3B0100002", "87654321"}};
+static printer_snapshot_t snaps[2];
+int printers_count(void) { return 2; }
+const printer_cfg_t *printer_cfg(int i) { return (i >= 0 && i < 2) ? &cfgs[i] : NULL; }
+bool printer_get(int i, printer_snapshot_t *o)
+{
+    *o = snaps[i];
+    return true;
+}
+const char *printer_link_name(printer_link_t l)
+{
+    static const char *n[] = {"未配置", "等待网络", "连接中", "在线", "访问码错误", "TLS 失败", "离线"};
+    return n[l];
+}
+static const char *s_last_cmd = "";
+#define STUB(name, sig)  \
+    esp_err_t sig        \
+    {                    \
+        s_last_cmd = name; \
+        printf("cmd: %s\n", name); \
+        return ESP_OK;   \
+    }
+STUB("pause", printer_pause(int i))
+STUB("resume", printer_resume(int i))
+STUB("stop", printer_stop(int i))
+STUB("speed", printer_set_speed(int i, int l))
+STUB("light", printer_set_light(int i, bool on))
+STUB("nozzle", printer_set_nozzle_temp(int i, int c))
+STUB("bed", printer_set_bed_temp(int i, int c))
+STUB("fan", printer_set_part_fan(int i, int p))
+STUB("pushall", printer_request_full_status(int i))
+net_state_t net_state(void) { return NET_CONNECTED; }
+int net_rssi(void) { return -52; }
+bool net_time_valid(void) { return true; }
+void net_ip_str(char *b, int n) { snprintf(b, n, "192.168.1.50"); }
+
+// ---- 显示 + 触摸 ----
+#define W 1024
+#define H 600
+static uint32_t fb[W * H];
+static uint32_t drawbuf[W * H];
+
+static void flush(lv_display_t *d, const lv_area_t *a, uint8_t *px)
+{
+    int w = a->x2 - a->x1 + 1;
+    for (int y = a->y1; y <= a->y2; y++) memcpy(&fb[y * W + a->x1], px + (size_t)(y - a->y1) * w * 4, (size_t)w * 4);
+    lv_display_flush_ready(d);
+}
+
+static int tx, ty, tpressed;
+static void touch_read(lv_indev_t *i, lv_indev_data_t *d)
+{
+    d->point.x = tx;
+    d->point.y = ty;
+    d->state = tpressed ? LV_INDEV_STATE_PRESSED : LV_INDEV_STATE_RELEASED;
+}
+
+static void run(int ms)
+{
+    for (int t = 0; t < ms; t += 5) {
+        s_ms += 5;
+        lv_tick_inc(5);
+        lv_timer_handler();
+    }
+}
+
+static void tap(int x, int y)
+{
+    tx = x, ty = y, tpressed = 1;
+    run(100);
+    tpressed = 0;
+    run(100);
+}
+
+static void shot(const char *name)
+{
+    lv_refr_now(NULL);
+    char path[128];
+    snprintf(path, sizeof(path), "%s.ppm", name);
+    FILE *f = fopen(path, "wb");
+    fprintf(f, "P6\n%d %d\n255\n", W, H);
+    for (int i = 0; i < W * H; i++) {
+        uint8_t rgb[3] = {(fb[i] >> 16) & 0xFF, (fb[i] >> 8) & 0xFF, fb[i] & 0xFF};
+        fwrite(rgb, 1, 3, f);
+    }
+    fclose(f);
+    printf("wrote %s\n", path);
+}
+
+int main(void)
+{
+    setenv("TZ", "CST-8", 1);
+    tzset();
+    lv_init();
+    lv_display_t *d = lv_display_create(W, H);
+    lv_display_set_buffers(d, drawbuf, NULL, sizeof(drawbuf), LV_DISPLAY_RENDER_MODE_PARTIAL);
+    lv_display_set_flush_cb(d, flush);
+    lv_indev_t *in = lv_indev_create();
+    lv_indev_set_type(in, LV_INDEV_TYPE_POINTER);
+    lv_indev_set_read_cb(in, touch_read);
+
+    // 一号机：打印中
+    bbl_status_t *a = &snaps[0].st;
+    bbl_status_init(a);
+    snaps[0].link = PRINTER_LINK_ONLINE;
+    a->valid = true;
+    a->gcode_state = BBL_GS_RUNNING;
+    a->percent = 63;
+    a->remaining_min = 87;
+    a->layer = 142;
+    a->total_layers = 230;
+    a->nozzle = 219.6f, a->nozzle_target = 220;
+    a->bed = 64.8f, a->bed_target = 65;
+    a->part_fan_pct = 100;
+    a->has_light = true, a->light_on = true;
+    strcpy(a->subtask, "龙年摆件_0.2mm_PLA_2h30m");
+
+    // 二号机：暂停，未开开发者模式
+    bbl_status_t *b = &snaps[1].st;
+    bbl_status_init(b);
+    snaps[1].link = PRINTER_LINK_ONLINE;
+    b->valid = true;
+    b->gcode_state = BBL_GS_PAUSE;
+    b->percent = 12;
+    b->remaining_min = 315;
+    b->layer = 8;
+    b->total_layers = 400;
+    b->nozzle = 180, b->nozzle_target = 0;
+    b->bed = 55, b->bed_target = 55;
+    b->speed_level = 3, b->speed_mag = 124;
+    b->has_light = true;
+    b->signature_required = true;
+    strcpy(b->subtask, "Benchy");
+
+    ui_init();
+    run(600);
+    shot("overview");
+
+    tap(260, 300);   // 点一号机
+    run(600);
+    shot("detail_running");
+
+    tap(464 + 20 + 260 + 124, 64 + 20 + 32);   // 停止按钮
+    run(400);
+    shot("detail_confirm_stop");
+
+    // 第二轮：二号机详情（只读 + 命令被拒）以及一号机访问码错误
+    lv_obj_t *mb = lv_obj_get_child(lv_layer_top(), 0);
+    if (mb) lv_obj_delete(mb);   // 关掉确认框（模拟器里直接删）
+    tap(70, 32);                 // 返回
+    run(400);
+    snaps[0].link = PRINTER_LINK_AUTH_FAILED;
+    tap(760, 300);               // 二号机
+    run(600);
+    b->result_seq = 1;
+    strcpy(b->result_cmd, "resume");
+    b->result_ok = false;
+    strcpy(b->result_reason, "mqtt message verify failed");
+    run(400);
+    shot("detail_readonly");
+    tap(70, 32);
+    run(600);
+    shot("overview_auth_failed");
+    return 0;
+}
