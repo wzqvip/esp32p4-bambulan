@@ -14,6 +14,7 @@
 void bbl_status_init(bbl_status_t *s)
 {
     memset(s, 0, sizeof(*s));
+    s->tray_now = 255;
     s->speed_level = BBL_SPEED_STANDARD;
     s->speed_mag = 100;
 }
@@ -131,6 +132,56 @@ static bool parse_command_result(bbl_status_t *s, const cJSON *sect)
     return true;
 }
 
+static bool parse_ams(bbl_status_t *s, const cJSON *ams)
+{
+    bool ch = false;
+    double v;
+    int now = s->tray_now;
+    if (get_number(ams, "tray_now", &v)) now = (int)v;
+    if (now != s->tray_now) {
+        s->tray_now = now;
+        ch = true;
+    }
+    const cJSON *units = cJSON_GetObjectItemCaseSensitive(ams, "ams");
+    if (!cJSON_IsArray(units)) return ch;
+    const cJSON *unit = cJSON_GetArrayItem(units, 0);
+    if (!unit) {
+        ch |= s->ams_trays != 0;
+        s->ams_trays = 0;
+        return ch;
+    }
+    const cJSON *trays = cJSON_GetObjectItemCaseSensitive(unit, "tray");
+    if (!cJSON_IsArray(trays)) return ch;
+    int n = 0;
+    const cJSON *t;
+    cJSON_ArrayForEach(t, trays) {
+        if (n >= 4) break;
+        bbl_tray_t nt;
+        memset(&nt, 0, sizeof(nt));
+        nt.remain = -1;
+        const cJSON *type = cJSON_GetObjectItemCaseSensitive(t, "tray_type");
+        const cJSON *col = cJSON_GetObjectItemCaseSensitive(t, "tray_color");
+        if (cJSON_IsString(type) && type->valuestring[0]) {
+            nt.loaded = true;
+            strncpy(nt.type, type->valuestring, sizeof(nt.type) - 1);
+        }
+        if (cJSON_IsString(col) && strlen(col->valuestring) >= 6) {
+            nt.color = (uint32_t)(strtoul(col->valuestring, NULL, 16) >> (strlen(col->valuestring) >= 8 ? 8 : 0));
+        }
+        if (get_number(t, "remain", &v)) nt.remain = (int)v;
+        if (memcmp(&nt, &s->tray[n], sizeof(nt)) != 0) {
+            s->tray[n] = nt;
+            ch = true;
+        }
+        n++;
+    }
+    if (n != s->ams_trays) {
+        s->ams_trays = n;
+        ch = true;
+    }
+    return ch;
+}
+
 static bool parse_print(bbl_status_t *s, const cJSON *p)
 {
     bool ch = false;
@@ -203,6 +254,14 @@ static bool parse_print(bbl_status_t *s, const cJSON *p)
             }
         }
     }
+
+    if (get_number(p, "gcode_start_time", &v) && (int64_t)v != s->start_time) {
+        s->start_time = (int64_t)v;
+        ch = true;
+    }
+
+    const cJSON *ams = cJSON_GetObjectItemCaseSensitive(p, "ams");
+    if (cJSON_IsObject(ams)) ch |= parse_ams(s, ams);
 
     bool sig_before = s->signature_required;
     upd_str(p, "fun", s->fun, sizeof(s->fun));

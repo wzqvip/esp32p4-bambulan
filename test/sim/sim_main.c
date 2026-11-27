@@ -4,6 +4,7 @@
 #include <string.h>
 #include <time.h>
 
+#include "camera.h"
 #include "lvgl.h"
 #include "net.h"
 #include "printer.h"
@@ -49,6 +50,43 @@ net_state_t net_state(void) { return NET_CONNECTED; }
 int net_rssi(void) { return -52; }
 bool net_time_valid(void) { return true; }
 void net_ip_str(char *b, int n) { snprintf(b, n, "192.168.1.50"); }
+
+
+// ---- 假摄像头：一号机给一张渐变图当画面，二号机模拟被拒 ----
+static uint16_t s_frame[CAMERA_VIEW_W * CAMERA_VIEW_H];
+static lv_image_dsc_t s_frame_dsc;
+static lv_obj_t *s_cam_imgs[2][CAMERA_MAX_BIND];
+static int s_cam_n[2];
+void camera_bind_image(int idx, lv_obj_t *img)
+{
+    if (idx >= 0 && idx < 2 && s_cam_n[idx] < CAMERA_MAX_BIND) s_cam_imgs[idx][s_cam_n[idx]++] = img;
+}
+void camera_start_all(void) {}
+camera_state_t camera_state(int idx) { return idx == 0 ? CAMERA_STREAMING : CAMERA_REJECTED; }
+const char *camera_state_text(camera_state_t st)
+{
+    return st == CAMERA_REJECTED ? "打印机拒绝了视频连接\n需开启开发者模式，或检查访问码" : "";
+}
+bool camera_has_frame(int idx) { return idx == 0; }
+static void fake_camera_frame(void)
+{
+    for (int y = 0; y < CAMERA_VIEW_H; y++)
+        for (int x = 0; x < CAMERA_VIEW_W; x++) {
+            int r = 40 + x * 60 / CAMERA_VIEW_W, g = 50 + y * 70 / CAMERA_VIEW_H, b = 70;
+            int dx = x - 240, dy = y - 170;
+            if (dx * dx / 4 + dy * dy < 900) r = 220, g = 120, b = 40;   // 一块“模型”
+            if (y > 200) r = g = b = 30 + (x / 24 % 2) * 12;            // 热床纹理
+            s_frame[y * CAMERA_VIEW_W + x] = (uint16_t)(((r >> 3) << 11) | ((g >> 2) << 5) | (b >> 3));
+        }
+    s_frame_dsc.header.magic = LV_IMAGE_HEADER_MAGIC;
+    s_frame_dsc.header.cf = LV_COLOR_FORMAT_RGB565;
+    s_frame_dsc.header.w = CAMERA_VIEW_W;
+    s_frame_dsc.header.h = CAMERA_VIEW_H;
+    s_frame_dsc.header.stride = CAMERA_VIEW_W * 2;
+    s_frame_dsc.data = (const uint8_t *)s_frame;
+    s_frame_dsc.data_size = sizeof(s_frame);
+    for (int i = 0; i < s_cam_n[0]; i++) lv_image_set_src(s_cam_imgs[0][i], &s_frame_dsc);
+}
 
 // ---- 显示 + 触摸 ----
 #define W 1024
@@ -130,6 +168,17 @@ int main(void)
     a->part_fan_pct = 100;
     a->has_light = true, a->light_on = true;
     strcpy(a->subtask, "龙年摆件_0.2mm_PLA_2h30m");
+    a->start_time = (int64_t)time(NULL) - 92 * 60;
+    a->ams_trays = 4;
+    a->tray_now = 1;
+    const struct { const char *t; uint32_t c; int r; } trays[4] = {
+        {"PLA", 0xF2F2F2, 80}, {"PLA", 0xD32F2F, 45}, {"PETG", 0x1E88E5, 100}, {"", 0, -1}};
+    for (int i = 0; i < 4; i++) {
+        a->tray[i].loaded = trays[i].t[0] != 0;
+        strcpy(a->tray[i].type, trays[i].t);
+        a->tray[i].color = trays[i].c;
+        a->tray[i].remain = trays[i].r;
+    }
 
     // 二号机：暂停，未开开发者模式
     bbl_status_t *b = &snaps[1].st;
@@ -149,6 +198,7 @@ int main(void)
     strcpy(b->subtask, "Benchy");
 
     ui_init();
+    fake_camera_frame();
     run(600);
     shot("overview");
 
@@ -156,7 +206,7 @@ int main(void)
     run(600);
     shot("detail_running");
 
-    tap(464 + 20 + 260 + 124, 64 + 20 + 32);   // 停止按钮
+    tap(544 + 20 + 220 + 104, 64 + 20 + 30);   // 停止按钮
     run(400);
     shot("detail_confirm_stop");
 

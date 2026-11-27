@@ -28,6 +28,13 @@ typedef enum {
 } bbl_speed_t;
 
 typedef struct {
+    bool loaded;
+    uint32_t color;   // RRGGBB
+    char type[12];    // PLA / PETG ...
+    int remain;       // 余量 %，-1 未知
+} bbl_tray_t;
+
+typedef struct {
     bool valid;           // 收到过至少一条状态
     bbl_gcode_state_t gcode_state;
     int percent;          // mc_percent 0..100
@@ -47,6 +54,12 @@ typedef struct {
     uint32_t print_error;
     int hms_count;
     int wifi_dbm;
+    int64_t start_time;   // gcode_start_time（Unix 秒），0 表示未知
+
+    // AMS（A1 是 AMS lite，4 个料位）。只取第一台 AMS。
+    int ams_trays;        // 0 表示没有 AMS
+    bbl_tray_t tray[4];
+    int tray_now;         // 当前料位 0..3；254 外挂料盘；255 无
 
     // 授权控制：为 true 表示打印机要求签名命令（未开开发者模式），第三方只能读
     bool signature_required;

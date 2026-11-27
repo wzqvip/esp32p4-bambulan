@@ -41,6 +41,12 @@ int main(void)
     assert(s.wifi_dbm == -48);
     assert(s.flag3_auth);              // flag3 = 31，带 bit4
     assert(s.signature_required);      // 没有 fun 字段时按 flag3 判断
+    assert(s.ams_trays == 4);
+    assert(s.tray[0].loaded && !strcmp(s.tray[0].type, "PLA"));
+    assert(s.tray[0].color == 0x76D9F4);
+    assert(s.tray[3].color == 0x0ACC38);
+    assert(s.tray[0].remain == 100);
+    assert(s.tray_now == 255);
     free(full);
 
     // 2. 增量帧：只更新出现的字段
@@ -54,6 +60,10 @@ int main(void)
     assert(!strcmp(s.subtask, "测试模型"));
     assert(s.bed > 29.7f);             // 没出现的字段保持不变
     assert(s.signature_required);      // flag3 跨帧保留
+
+    assert(PARSE(&s, "{\"print\":{\"gcode_start_time\":\"1681479206\",\"ams\":{\"tray_now\":\"2\"},\"command\":\"push_status\"}}"));
+    assert(s.start_time == 1681479206);
+    assert(s.tray_now == 2 && s.ams_trays == 4);   // 只有 tray_now 的增量不清空料位
 
     // 3. 重复帧：没有变化
     assert(!PARSE(&s, "{\"print\":{\"mc_percent\":42,\"command\":\"push_status\"}}"));

@@ -5,6 +5,7 @@
 #include "sdkconfig.h"
 
 #include "board.h"
+#include "camera.h"
 #include "net.h"
 #include "printer.h"
 #include "ui.h"
@@ -14,6 +15,7 @@ static const char *TAG = "main";
 static void on_network_ready(void)
 {
     printers_start();
+    camera_start_all();
 }
 
 void app_main(void)
