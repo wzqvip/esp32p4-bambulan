@@ -225,7 +225,8 @@ esp_err_t printers_init(void)
             .credentials.username = "bblp",
             .credentials.client_id = p->client_id,
             .credentials.authentication.password = p->cfg.access_code,
-            .session.keepalive = 30,
+            // keepalive 短一些：板子掉电/复位后，打印机要等 1.5 倍 keepalive 才释放旧连接，期间新连接握手会卡住
+            .session.keepalive = 10,
             .session.disable_clean_session = false,
             .network.reconnect_timeout_ms = 2000,
             .network.timeout_ms = 10000,
