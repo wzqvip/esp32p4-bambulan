@@ -5,3 +5,4 @@ sdkconfig.old
 test/host/build/
 .vscode/
 *.pyc
+sdkconfig.defaults.local

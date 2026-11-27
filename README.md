@@ -63,6 +63,9 @@ menuconfig 里要填：
 
 这些值存在 `sdkconfig` 里，已经被 `.gitignore` 忽略，不会提交到仓库。
 
+也可以不进 menuconfig：把 `sdkconfig.defaults.local.example` 复制成 `sdkconfig.defaults.local` 填好，
+编译时会自动叠加（同样被 `.gitignore` 忽略）。改了它之后要删掉 `sdkconfig` 再编译。
+
 序列号和访问码在打印机屏幕上看：设置 → WLAN/网络（访问码）、设置 → 设备信息（序列号）。
 IP 建议在路由器里给打印机绑定成固定地址。
 

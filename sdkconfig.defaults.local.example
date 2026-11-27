@@ -1,0 +1,13 @@
+# 复制成 sdkconfig.defaults.local 并填好（该文件不会提交）。改完后删掉 sdkconfig 再 idf.py build。
+CONFIG_BBL_WIFI_SSID="your-ssid"
+CONFIG_BBL_WIFI_PASSWORD="your-password"
+CONFIG_BBL_PRINTER_COUNT=1
+CONFIG_BBL_P1_NAME="A1 一号"
+CONFIG_BBL_P1_HOST="192.168.x.x"
+CONFIG_BBL_P1_SERIAL="打印机设置→设备信息里的 SN"
+CONFIG_BBL_P1_ACCESS_CODE="xxxxxxxx"
+# 第二台：把 PRINTER_COUNT 改成 2 再填
+# CONFIG_BBL_P2_NAME="A1 二号"
+# CONFIG_BBL_P2_HOST="192.168.x.x"
+# CONFIG_BBL_P2_SERIAL=""
+# CONFIG_BBL_P2_ACCESS_CODE=""
