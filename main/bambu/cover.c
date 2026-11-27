@@ -202,17 +202,28 @@ static long ftp_size(ftp_t *f, const char *path)
 // 读文件 [off, off+len) 到 buf，返回实际读到的字节数，-1 表示失败（控制连接可能已不可用）
 static int ftp_read_range(ftp_t *f, const char *path, long off, size_t len, uint8_t *buf)
 {
-    if (ftp_cmd(f, "PASV") != 227) return -1;
+    int rc;
+#define FAIL_IF(cond, what)                                                                  \
+    if (cond) {                                                                              \
+        ESP_LOGW(TAG, "[%s] %s failed: %s", f->cfg->name, what, f->line);                    \
+        return -1;                                                                           \
+    }
+    rc = ftp_cmd(f, "PASV");
+    FAIL_IF(rc != 227, "PASV");
     const char *p = strchr(f->line, '(');
     int h[6];
-    if (!p || sscanf(p + 1, "%d,%d,%d,%d,%d,%d", &h[0], &h[1], &h[2], &h[3], &h[4], &h[5]) != 6) return -1;
+    if (!p || sscanf(p + 1, "%d,%d,%d,%d,%d,%d", &h[0], &h[1], &h[2], &h[3], &h[4], &h[5]) != 6) {
+        ESP_LOGW(TAG, "[%s] bad PASV reply: %s", f->cfg->name, f->line);
+        return -1;
+    }
     int port = h[4] * 256 + h[5];
-    if (ftp_cmd(f, "REST %ld", off) != 350) return -1;
+    rc = ftp_cmd(f, "REST %ld", off);
+    FAIL_IF(rc != 350, "REST");
 
     // 先发 RETR，再连数据端口：服务器接受连接、回 150 之后才开始数据通道的 TLS 握手
     char cmd[400];
     int n = snprintf(cmd, sizeof(cmd), "RETR %s\r\n", path);
-    if (n >= (int)sizeof(cmd) || !tls_write_all(f->ctrl, cmd, n)) return -1;
+    FAIL_IF(n >= (int)sizeof(cmd) || !tls_write_all(f->ctrl, cmd, n), "send RETR");
 
     esp_tls_cfg_t t;
     tls_cfg_init(f->cfg, &t);
@@ -234,9 +245,12 @@ static int ftp_read_range(ftp_t *f, const char *path, long off, size_t len, uint
         got += r;
     }
     esp_tls_conn_destroy(data);
+    ESP_LOGI(TAG, "[%s] RETR @%ld: got %u/%u bytes", f->cfg->name, off, (unsigned)got, (unsigned)len);
     // 提前关闭数据连接时服务器回 426/451，读完到 EOF 时回 226，都算正常
     c = ftp_resp(f);
-    if (c < 0) return -1;
+    FAIL_IF(c < 0, "transfer reply");
+    ESP_LOGI(TAG, "[%s] transfer reply: %s", f->cfg->name, f->line);
+#undef FAIL_IF
     return (int)got;
 }
 
@@ -427,7 +441,12 @@ static bool fetch_cover(cover_t *c, const bbl_status_t *st)
     long tail_off = size > TAIL_LEN ? size - TAIL_LEN : 0;
     size_t tail_len = size - tail_off;
     tail = heap_caps_malloc(tail_len, MALLOC_CAP_SPIRAM);
-    if (!tail || ftp_read_range(&f, path, tail_off, tail_len, tail) != (int)tail_len) goto out;
+    if (!tail) goto out;
+    int tgot = ftp_read_range(&f, path, tail_off, tail_len, tail);
+    if (tgot != (int)tail_len) {
+        ESP_LOGW(TAG, "[%s] tail read %d/%u", cfg->name, tgot, (unsigned)tail_len);
+        goto out;
+    }
 
     uint64_t cd_off, cd_size;
     if (!zip_locate_cd(tail, tail_len, tail_off, &cd_off, &cd_size) || cd_off < (uint64_t)tail_off ||
@@ -442,6 +461,8 @@ static bool fetch_cover(cover_t *c, const bbl_status_t *st)
         ESP_LOGW(TAG, "[%s] no plate preview in 3mf", cfg->name);
         goto out;
     }
+    ESP_LOGI(TAG, "[%s] entry: method %u comp %llu uncomp %llu at %llu", cfg->name, z.method,
+             (unsigned long long)z.comp, (unsigned long long)z.uncomp, (unsigned long long)z.local_off);
     if (z.comp == 0 || z.comp > PNG_MAX || z.uncomp > PNG_MAX || (z.method != 0 && z.method != 8)) goto out;
 
     // 本地文件头 30 字节 + 文件名 + 扩展字段（长度未知，留 512 字节余量）
@@ -449,15 +470,25 @@ static bool fetch_cover(cover_t *c, const bbl_status_t *st)
     blob = heap_caps_malloc(want_len, MALLOC_CAP_SPIRAM);
     if (!blob) goto out;
     int got = ftp_read_range(&f, path, (long)z.local_off, want_len, blob);
-    if (got < 30 || rd32(blob) != 0x04034b50) goto out;
+    if (got < 30 || rd32(blob) != 0x04034b50) {
+        ESP_LOGW(TAG, "[%s] bad local header (got %d)", cfg->name, got);
+        goto out;
+    }
     size_t data_off = 30 + rd16(blob + 26) + rd16(blob + 28);
-    if (data_off + z.comp > (size_t)got) goto out;
+    if (data_off + z.comp > (size_t)got) {
+        ESP_LOGW(TAG, "[%s] entry truncated (got %d, need %u)", cfg->name, got, (unsigned)(data_off + z.comp));
+        goto out;
+    }
 
     const uint8_t *png_data = blob + data_off;
     size_t png_len = z.comp;
     if (z.method == 8) {
         size_t outsize = 0;
-        if (lodepng_inflate(&png, &outsize, png_data, z.comp, &lodepng_default_decompress_settings) != 0) goto out;
+        unsigned e = lodepng_inflate(&png, &outsize, png_data, z.comp, &lodepng_default_decompress_settings);
+        if (e) {
+            ESP_LOGW(TAG, "[%s] inflate failed: %u", cfg->name, e);
+            goto out;
+        }
         png_data = png;
         png_len = outsize;
     }
