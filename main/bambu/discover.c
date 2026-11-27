@@ -1,5 +1,5 @@
 // 监听拓竹打印机的局域网 SSDP 广播（UDP 2021 / 1990，组播 239.255.255.250），
-// 按 USN（序列号）取出 DevName.bambu.com（打印机在 App 里的名字，GBK 编码）显示在屏幕上。
+// 按 USN（序列号）取出 DevName.bambu.com（打印机在 App 里的名字，实测是 UTF-8）显示在屏幕上。
 #include "discover.h"
 
 #include <string.h>
@@ -51,6 +51,19 @@ static void gbk_to_utf8(const char *in, size_t len, char *out, size_t cap)
     out[n] = '\0';
 }
 
+static bool valid_utf8(const uint8_t *p, size_t len)
+{
+    for (size_t i = 0; i < len;) {
+        int n = p[i] < 0x80 ? 0 : (p[i] & 0xE0) == 0xC0 ? 1 : (p[i] & 0xF0) == 0xE0 ? 2 : (p[i] & 0xF8) == 0xF0 ? 3 : -1;
+        if (n < 0 || i + n >= len + (n == 0)) return false;
+        for (int k = 1; k <= n; k++) {
+            if ((p[i + k] & 0xC0) != 0x80) return false;
+        }
+        i += n + 1;
+    }
+    return true;
+}
+
 // 在报文里找 "Key: value"（不区分大小写），返回 value 起点和长度
 static const char *header(const char *msg, const char *key, size_t *len)
 {
@@ -79,7 +92,15 @@ static void handle_packet(char *buf)
     char serial[24], utf8[48];
     memcpy(serial, usn, ul);
     serial[ul] = '\0';
-    gbk_to_utf8(name, nl, utf8, sizeof(utf8));
+    if (valid_utf8((const uint8_t *)name, nl)) {
+        // 截断时别切在多字节字符中间
+        size_t n = nl < sizeof(utf8) - 1 ? nl : sizeof(utf8) - 1;
+        while (n > 0 && n < nl && ((uint8_t)name[n] & 0xC0) == 0x80) n--;
+        memcpy(utf8, name, n);
+        utf8[n] = '\0';
+    } else {
+        gbk_to_utf8(name, nl, utf8, sizeof(utf8));   // 兜底：老固件可能是 GBK
+    }
     if (utf8[0]) printer_set_dev_name(serial, utf8);
 }
 
