@@ -5,6 +5,7 @@
 
 #include "esp_heap_caps.h"
 #include "esp_log.h"
+#include "esp_mac.h"
 #include "esp_random.h"
 #include "esp_timer.h"
 #include "esp_tls.h"
@@ -213,7 +214,10 @@ esp_err_t printers_init(void)
 
         snprintf(p->topic_report, sizeof(p->topic_report), "device/%s/report", p->cfg.serial);
         snprintf(p->topic_request, sizeof(p->topic_request), "device/%s/request", p->cfg.serial);
-        snprintf(p->client_id, sizeof(p->client_id), "p4screen-%08lx-%d", (unsigned long)esp_random(), i);
+        // 固定的 client_id（按本机 MAC）：板子重启后再连时，打印机会顶掉上次残留的会话，而不是让它占着名额
+        uint8_t mac[6] = {0};
+        if (esp_efuse_mac_get_default(mac) != ESP_OK) esp_fill_random(mac, sizeof(mac));
+        snprintf(p->client_id, sizeof(p->client_id), "p4screen-%02x%02x%02x%02x-%d", mac[2], mac[3], mac[4], mac[5], i);
         snprintf(p->uri, sizeof(p->uri), "mqtts://%s:8883", p->cfg.host);
 
         esp_mqtt_client_config_t mc = {

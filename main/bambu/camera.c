@@ -38,6 +38,7 @@ typedef struct {
     uint8_t *frame[2];        // 缩放后的 RGB565，双缓冲
     int front;
     bool has_frame;
+    bool logged;              // 已打印过分辨率
     lv_image_dsc_t dsc[2];
     lv_obj_t *imgs[CAMERA_MAX_BIND];
     int nimg;
@@ -126,10 +127,9 @@ static bool decode_frame(cam_t *c, size_t len, uint8_t *dst)
     uint32_t out_len = 0;
     if (jpeg_decoder_process(s_dec, &dcfg, c->jpeg, len, s_dec_out, s_dec_out_size, &out_len) == ESP_OK) {
         // 等比缩放后裁掉多出的边，铺满 480x270（PPA 缩放步进 1/16，向上取整保证铺满）
-        static bool logged;
-        if (!logged) {
-            logged = true;
-            ESP_LOGI(TAG, "camera frame %lux%lu", (unsigned long)info.width, (unsigned long)info.height);
+        if (!c->logged) {
+            c->logged = true;
+            ESP_LOGI(TAG, "[%d] camera frame %lux%lu", c->idx, (unsigned long)info.width, (unsigned long)info.height);
         }
         float sx = (float)CAMERA_VIEW_W / info.width, sy = (float)CAMERA_VIEW_H / info.height;
         float s = sx > sy ? sx : sy;
