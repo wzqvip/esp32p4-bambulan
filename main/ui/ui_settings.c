@@ -572,7 +572,7 @@ static void nav_clicked(lv_event_t *e) { show_section((int)(intptr_t)lv_event_ge
 static void back_clicked(lv_event_t *e)
 {
     edit_close(false);
-    lv_screen_load_anim(s_back_to, LV_SCR_LOAD_ANIM_MOVE_RIGHT, ui_page_anim_ms(), 0, false);
+    ui_slide_to(s_back_to, false);
 }
 
 void ui_settings_build(void)
@@ -649,10 +649,10 @@ void ui_settings_open(lv_obj_t *back_to)
         lv_obj_add_state(s_targets[i].save_btn, LV_STATE_DISABLED);
     }
     show_section(s_cur_sec);
-    lv_screen_load_anim(s_scr, LV_SCR_LOAD_ANIM_MOVE_LEFT, ui_page_anim_ms(), 0, false);
+    ui_slide_to(s_scr, true);
 }
 
-uint32_t ui_page_anim_ms(void) { return settings_get()->page_anim ? 200 : 0; }
+uint32_t ui_page_anim_ms(void) { return settings_get()->page_anim ? 250 : 0; }
 
 // ---------- 自动息屏 ----------
 static void wake(void)

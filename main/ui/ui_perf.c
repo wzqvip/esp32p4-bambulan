@@ -1,9 +1,10 @@
 // 调试：渲染耗时 / 帧率统计，和自动来回切页。都由 menuconfig「调试」里的开关控制，默认全关。
 //
-// 每帧拆成三段（单位 ms）：
-//   pre    = REFR_START → RENDER_START：布局 + 双缓冲同步（把上一帧改过的区域拷到另一块缓冲）
-//   render = RENDER_START → 最后一次 FLUSH_START：LVGL 软件绘制
-//   wait   = 最后一次 FLUSH_START → FLUSH_FINISH：等屏幕 vsync 换缓冲（约 56Hz，最长约 18ms）
+// 每帧拆成几段（单位 ms）：
+//   pre    = REFR_START → RENDER_START：布局
+//   render = RENDER_START → 最后一次 FLUSH_START：LVGL 软件绘制（含等上一块 DMA 送屏完成的时间）
+//   wait   = 本帧所有 FLUSH_WAIT_START → FLUSH_WAIT_FINISH 之和：CPU 等 DMA2D 把画好的区域拷进帧缓冲
+//   所以 render - wait ≈ 纯计算；wait 大说明瓶颈在送屏
 // 切页动画期间（存在 prev_scr）的帧单独统计，动画结束后打印一行汇总和逐帧耗时。
 #include "ui.h"
 #include "ui_priv.h"
@@ -28,7 +29,7 @@ typedef struct {
 } stats_t;
 
 static stats_t s_idle, s_anim;
-static int64_t t_refr, t_render, t_flush, t_flush_end, s_last_idle_log;
+static int64_t t_refr, t_render, t_flush, t_flush_end, t_wait0, t_wait_sum, s_last_idle_log;
 static int64_t frame_px;
 static bool rendered, in_anim;
 
@@ -39,7 +40,7 @@ static void stats_reset(stats_t *s)
 
 static void stats_add(stats_t *s, int64_t now, bool keep_list)
 {
-    int64_t pre = t_render - t_refr, render = t_flush - t_render, wait = t_flush_end - t_flush;
+    int64_t pre = t_render - t_refr, render = t_flush - t_render, wait = t_wait_sum;
     int64_t frame = now - t_refr;
     if (!s->frames) s->first_us = t_refr;
     s->last_us = now;
@@ -75,6 +76,7 @@ static void disp_event(lv_event_t *e)
     switch (lv_event_get_code(e)) {
     case LV_EVENT_REFR_START:
         t_refr = t_render = t_flush = t_flush_end = now;
+        t_wait_sum = 0;
         frame_px = 0;
         rendered = false;
         break;
@@ -87,6 +89,12 @@ static void disp_event(lv_event_t *e)
         t_flush = now;
         break;
     }
+    case LV_EVENT_FLUSH_WAIT_START:
+        t_wait0 = now;
+        break;
+    case LV_EVENT_FLUSH_WAIT_FINISH:
+        t_wait_sum += now - t_wait0;
+        break;
     case LV_EVENT_FLUSH_FINISH:
         t_flush_end = now;
         break;
@@ -94,9 +102,10 @@ static void disp_event(lv_event_t *e)
         rendered = true;
         break;
     case LV_EVENT_REFR_READY: {
-        bool anim = lv_display_get_screen_prev(disp) != NULL;
+        bool anim = ui_slide_busy();
         if (in_anim && !anim) {
             if (rendered) stats_add(&s_anim, now, true);   // 动画最后一帧（prev_scr 已清掉）
+            ESP_LOGI(TAG, "page anim: snapshot prep %u ms", (unsigned)ui_slide_prep_ms());
             stats_log("page anim", &s_anim);
             stats_reset(&s_anim);
             in_anim = false;

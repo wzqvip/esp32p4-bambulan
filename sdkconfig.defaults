@@ -79,3 +79,6 @@ CONFIG_LV_USE_PERF_MONITOR=n
 
 # 右下角 CPU 占用（每个核空闲任务的运行时间）
 CONFIG_FREERTOS_GENERATE_RUN_TIME_STATS=y
+
+# 切页动画先把两页拍成图片再移动（ui_slide.c）
+CONFIG_LV_USE_SNAPSHOT=y

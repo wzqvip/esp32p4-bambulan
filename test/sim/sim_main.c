@@ -59,6 +59,8 @@ bool net_time_valid(void) { return true; }
 void net_ip_str(char *b, int n) { snprintf(b, n, "192.168.1.50"); }
 void sys_set_backlight(int p) { printf("backlight %d\n", p); }
 void sys_restart(void) { printf("restart\n"); }
+void *ui_plat_alloc(size_t n) { return malloc(n); }
+bool ui_plat_capture_screen(void *d, size_t n) { return false; }
 void sys_info(char *b, size_t n)
 {
     snprintf(b, n, "固件版本：sim\n编译时间：-\nESP-IDF：-\n运行时间：0天 00:01:23\n可用内存：内部 312 KB，PSRAM 28123 KB");
@@ -316,5 +318,39 @@ int main(void)
     tap(600, 290);
     run(400);
     shot("settings_edit");
+
+    // 切页动画：比较“整屏控件重画”和“两张快照图片”的单帧耗时
+    {
+        lv_obj_t *mb2 = lv_obj_get_child(lv_layer_top(), -1);
+        if (mb2 && !lv_obj_has_flag(mb2, LV_OBJ_FLAG_HIDDEN)) lv_obj_delete(mb2);
+        settings_t st = *settings_get();
+        st.page_anim = true;
+        settings_save(&st);
+        tap(70, 32);   // 设置 → 返回概览（滑动）
+        run(600);
+        lv_obj_t *ov = lv_screen_active();
+        struct timespec a, b;
+        clock_gettime(CLOCK_MONOTONIC, &a);
+        for (int i = 0; i < 20; i++) {
+            lv_obj_invalidate(ov);
+            lv_refr_now(NULL);
+        }
+        clock_gettime(CLOCK_MONOTONIC, &b);
+        double full = ((b.tv_sec - a.tv_sec) * 1e3 + (b.tv_nsec - a.tv_nsec) / 1e6) / 20;
+        tap(260, 300);   // 点一号机，开始滑动
+        run(60);
+        shot("slide_mid");
+        lv_obj_t *as = lv_screen_active();
+        clock_gettime(CLOCK_MONOTONIC, &a);
+        for (int i = 0; i < 20; i++) {
+            lv_obj_invalidate(as);
+            lv_refr_now(NULL);
+        }
+        clock_gettime(CLOCK_MONOTONIC, &b);
+        double snap = ((b.tv_sec - a.tv_sec) * 1e3 + (b.tv_nsec - a.tv_nsec) / 1e6) / 20;
+        printf("full-screen frame: widgets %.2f ms, snapshot images %.2f ms (PC)\n", full, snap);
+        run(600);
+        shot("slide_end");
+    }
     return 0;
 }

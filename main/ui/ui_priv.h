@@ -38,3 +38,13 @@ void ui_settings_debug_next(void);
 void ui_header_band(lv_obj_t *scr);
 /** 右下角性能信息（ui_stats.c，只在板子上编译） */
 void ui_stats_init(lv_display_t *disp);
+/** 切页：设置里开了动画就滑过去（快照 + 移动两张整屏图），否则直接切换。forward=新页从右边进来 */
+void ui_slide_to(lv_obj_t *target, bool forward);
+bool ui_slide_busy(void);
+uint32_t ui_slide_prep_ms(void);
+
+// ---- 平台相关（板子上在 ui_plat_esp.c，模拟器里打桩） ----
+/** 分配一块大内存（板子上放 PSRAM，按 cache line 对齐） */
+void *ui_plat_alloc(size_t size);
+/** 把屏幕当前显示的内容复制到 dst（RGB565，1024x600）。做不到返回 false，由调用方用 lv_snapshot 代替 */
+bool ui_plat_capture_screen(void *dst, size_t size);

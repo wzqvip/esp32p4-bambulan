@@ -463,6 +463,7 @@ static void fmt_note(char *buf, size_t n, const printer_snapshot_t *s, lv_color_
 // ================= 概览页 =================
 // 卡片 494x524，内边距左右 7、上下 8，内部宽度正好放下 480 宽的摄像头画面
 static void show_detail(int idx);
+static void update_detail(const printer_snapshot_t *s);
 
 static void card_clicked(lv_event_t *e)
 {
@@ -636,7 +637,7 @@ static void build_overview(void)
 static void back_clicked(lv_event_t *e)
 {
     s_detail_idx = -1;
-    lv_screen_load_anim(s_overview, LV_SCR_LOAD_ANIM_MOVE_RIGHT, ui_page_anim_ms(), 0, false);
+    ui_slide_to(s_overview, false);
 }
 
 static void set_status(const char *txt, lv_color_t color)
@@ -921,8 +922,11 @@ static void show_detail(int idx)
     s_d.nozzle_edit.pending = s_d.bed_edit.pending = false;
     s_d.fan_edit_ms = s_d.light_edit_ms = s_d.speed_edit_ms = 0;
     printer_snapshot_t s;
-    if (printer_get(idx, &s)) s_d.last_result_seq = s.st.result_seq;
-    lv_screen_load_anim(s_d.scr, LV_SCR_LOAD_ANIM_MOVE_LEFT, ui_page_anim_ms(), 0, false);
+    if (printer_get(idx, &s)) {
+        s_d.last_result_seq = s.st.result_seq;
+        update_detail(&s);   // 先填好内容，切页动画拍的快照才是这台打印机的
+    }
+    ui_slide_to(s_d.scr, true);
 }
 
 static const char *cmd_name(const char *cmd)
@@ -1126,7 +1130,7 @@ void ui_init(void)
 void ui_debug_toggle_page(void)
 {
     static int next;
-    if (lv_display_get_screen_prev(NULL)) return;   // 上一次动画还没结束
+    if (ui_slide_busy()) return;   // 上一次动画还没结束
     if (s_detail_idx >= 0) {
         back_clicked(NULL);
     } else {

@@ -1,5 +1,7 @@
 // ELECROW CrowPanel Advanced 7" ESP32-P4：EK79007 MIPI-DSI 1024x600 + GT911 触摸 + PWM 背光
 #pragma once
+#include <stdbool.h>
+#include <stddef.h>
 #include <stdint.h>
 #include "esp_err.h"
 #include "lvgl.h"
@@ -10,3 +12,5 @@
 /** 初始化 LDO、背光、屏幕、触摸和 LVGL（esp_lvgl_port）。成功后可以用 lvgl_port_lock 操作 LVGL。 */
 esp_err_t board_display_init(lv_display_t **out_disp);
 esp_err_t board_set_backlight(uint32_t percent);
+/** 把当前帧缓冲（屏幕正在显示的内容，RGB565）复制到 dst */
+bool board_copy_framebuffer(void *dst, size_t size);

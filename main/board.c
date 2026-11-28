@@ -13,10 +13,13 @@
 #include "esp_check.h"
 #include "esp_log.h"
 #include "esp_lvgl_port.h"
+#include "esp_cache.h"
+#include <string.h>
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
 
 static const char *TAG = "board";
+static esp_lcd_panel_handle_t s_panel;
 
 #if CONFIG_BBL_LCD_SWAP_BYTES
 #define LCD_SWAP_BYTES 1
@@ -160,6 +163,7 @@ esp_err_t board_display_init(lv_display_t **out_disp)
     ESP_RETURN_ON_ERROR(esp_lcd_new_panel_ek79007(dbi, &panel_cfg, &panel), TAG, "panel");
     ESP_RETURN_ON_ERROR(esp_lcd_panel_reset(panel), TAG, "panel reset");
     ESP_RETURN_ON_ERROR(esp_lcd_panel_init(panel), TAG, "panel init");
+    s_panel = panel;
 
     esp_lcd_touch_handle_t tp = NULL;
     if (touch_init(&tp) != ESP_OK) {
@@ -211,3 +215,17 @@ esp_err_t board_display_init(lv_display_t **out_disp)
     if (out_disp) *out_disp = disp;
     return ESP_OK;
 }
+
+bool board_copy_framebuffer(void *dst, size_t size)
+{
+    void *fb = NULL;
+    size_t n = BOARD_LCD_H_RES * BOARD_LCD_V_RES * 2;
+    if (!s_panel || size < n || esp_lcd_dpi_panel_get_frame_buffer(s_panel, 1, &fb) != ESP_OK || !fb) return false;
+    // 局部渲染模式下最后一块区域可能还在由 DMA2D 往帧缓冲里拷，等一下再读
+    vTaskDelay(pdMS_TO_TICKS(6));
+    // 帧缓冲只被 DMA 写过，CPU 缓存里可能是旧数据：先失效再读
+    esp_cache_msync(fb, n, ESP_CACHE_MSYNC_FLAG_DIR_M2C);
+    memcpy(dst, fb, n);
+    return true;
+}
+
