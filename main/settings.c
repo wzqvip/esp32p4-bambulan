@@ -112,6 +112,8 @@ void settings_init(void)
         }
         free(b);
         nvs_close(h);
+    } else {
+        ESP_LOGI(TAG, "no saved settings, using menuconfig defaults");
     }
     if (s_cur.brightness < 5 || s_cur.brightness > 100) s_cur.brightness = CONFIG_BBL_BACKLIGHT_PERCENT;
 #endif
