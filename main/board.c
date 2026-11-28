@@ -134,11 +134,7 @@ esp_err_t board_display_init(lv_display_t **out_disp)
         .dpi_clock_freq_mhz = 51,
         .virtual_channel = 0,
         .in_color_format = LCD_COLOR_FMT_RGB565,
-#if CONFIG_BBL_DISP_PARTIAL_1FB
-        .num_fbs = 1,
-#else
-        .num_fbs = 2,
-#endif
+        .num_fbs = 1,   // 见下面“刷屏方式”说明，不要改成 2
         .video_timing = {
             .h_size = BOARD_LCD_H_RES,
             .v_size = BOARD_LCD_V_RES,
@@ -195,19 +191,16 @@ esp_err_t board_display_init(lv_display_t **out_disp)
             .sw_rotate = true,   // 不旋转；设为 true 避免 lvgl_port 调用面板不支持的 swap_xy
             .swap_bytes = LCD_SWAP_BYTES,
             .full_refresh = false,
-#if CONFIG_BBL_DISP_PARTIAL_1FB
             .direct_mode = false,
-#else
-            .direct_mode = true,
-#endif
         },
     };
-#if CONFIG_BBL_DISP_PARTIAL_1FB
-    // 官方例程的方式：LVGL 只画脏区域到 PSRAM 缓冲，再由 DMA2D 拷进唯一的帧缓冲
+    // ===== 刷屏方式（实测定下来的，不要改）=====
+    // 和 ELECROW 官方例程一致：局部渲染（PARTIAL）+ 1 块 DPI 帧缓冲 + 不开 avoid_tearing + 背光 100%。
+    // LVGL 只画脏区域到 PSRAM 里的绘制缓冲，再由 DMA2D 拷进唯一的帧缓冲。
+    // 试过的反例：direct_mode + 2 块帧缓冲 + avoid_tearing（vsync 换缓冲）会让整块屏亮度肉眼可见地闪
+    // （录像测得约 ±3%，背光开到 100% 也一样）。另外界面上不要加一直在跑的动画（呼吸灯、循环动效等），
+    // 持续刷新同样会把闪烁带回来。详见 README “刷屏方式”。
     const lvgl_port_display_dsi_cfg_t dsi_cfg = {.flags.avoid_tearing = false};
-#else
-    const lvgl_port_display_dsi_cfg_t dsi_cfg = {.flags.avoid_tearing = true};
-#endif
     lv_display_t *disp = lvgl_port_add_disp_dsi(&disp_cfg, &dsi_cfg);
     if (!disp) return ESP_FAIL;
 
