@@ -42,6 +42,16 @@ static IRAM_ATTR bool on_vsync(esp_lcd_panel_handle_t p, esp_lcd_dpi_panel_event
     return hp == pdTRUE;
 }
 
+static lv_display_t *s_disp;
+
+// 挂不挂 vsync 回调（IDF 只在挂了 on_refresh_done 时才打开 VSYNC 中断）
+static void set_vsync_cb(bool on)
+{
+    const esp_lcd_dpi_panel_event_callbacks_t cbs = {.on_color_trans_done = on_trans_done,
+                                                     .on_refresh_done = on ? on_vsync : NULL};
+    ESP_ERROR_CHECK(esp_lcd_dpi_panel_register_event_callbacks(s_panel, &cbs, s_disp));
+}
+
 #if CONFIG_BBL_LCD_SWAP_BYTES
 #define LCD_SWAP_BYTES 1
 #else
@@ -228,11 +238,11 @@ esp_err_t board_display_init(lv_display_t **out_disp)
     const lvgl_port_display_dsi_cfg_t dsi_cfg = {.flags.avoid_tearing = false};
     lv_display_t *disp = lvgl_port_add_disp_dsi(&disp_cfg, &dsi_cfg);
     if (!disp) return ESP_FAIL;
-    // 重新挂 DPI 回调：多挂一个 vsync 回调给切页滑动用（register 会覆盖 esp_lvgl_port 挂的，所以 flush_ready 也自己做）。
-    // 这不改变刷屏方式：仍然是局部渲染 + 1 块帧缓冲，vsync 只是用来计时。
+    // 自己接管 DPI 回调（register 会覆盖 esp_lvgl_port 挂的，所以 flush_ready 也自己做）。
+    // vsync 中断只在切页滑动的那 250ms 里打开：常开时实测静止画面又出现 1.5~3% 的亮度抖动。
     s_vsync = xSemaphoreCreateBinary();
-    const esp_lcd_dpi_panel_event_callbacks_t cbs = {.on_color_trans_done = on_trans_done, .on_refresh_done = on_vsync};
-    ESP_ERROR_CHECK(esp_lcd_dpi_panel_register_event_callbacks(s_panel, &cbs, disp));
+    s_disp = disp;
+    set_vsync_cb(false);
 
     if (tp) {
         const lvgl_port_touch_cfg_t tcfg = {.disp = disp, .handle = tp};
@@ -298,6 +308,7 @@ int board_slide(const void *old_img, const void *new_img, int dir, uint32_t ms)
     int64_t t0 = esp_timer_get_time(), dur = (int64_t)ms * 1000;
     int frames = 0, missed = 0;
     int64_t copy_max = 0, copy_sum = 0;
+    set_vsync_cb(true);
     xSemaphoreTake(s_vsync, 0);
     for (;;) {
         // 每帧等屏幕扫完上一帧再开始拷，从上往下按条带拷：PPA 比扫描快，始终跑在扫描线前面，不撕裂
@@ -317,7 +328,10 @@ int board_slide(const void *old_img, const void *new_img, int dir, uint32_t ms)
                 ok = blit(fb, fb_size, new_img, W - off, 0, off, y, h) &&
                      blit(fb, fb_size, old_img, 0, off, W - off, y, h);
             }
-            if (!ok) return -1;
+            if (!ok) {
+                set_vsync_cb(false);
+                return -1;
+            }
         }
         int64_t c = esp_timer_get_time() - c0;
         copy_sum += c;
@@ -325,6 +339,7 @@ int board_slide(const void *old_img, const void *new_img, int dir, uint32_t ms)
         frames++;
         if (t >= 1.0f) break;
     }
+    set_vsync_cb(false);
     int64_t total = esp_timer_get_time() - t0;
     ESP_LOGI(TAG, "slide: %d frames in %d ms (%.1f fps), PPA copy avg %.1f max %.1f ms, vsync timeouts %d", frames,
              (int)(total / 1000), total > 0 ? frames * 1e6 / total : 0.0, copy_sum / 1000.0 / frames, copy_max / 1000.0,
