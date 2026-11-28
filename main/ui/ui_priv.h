@@ -42,9 +42,12 @@ void ui_stats_init(lv_display_t *disp);
 void ui_slide_to(lv_obj_t *target, bool forward);
 bool ui_slide_busy(void);
 uint32_t ui_slide_prep_ms(void);
+int ui_slide_hw_frames(void);
 
 // ---- 平台相关（板子上在 ui_plat_esp.c，模拟器里打桩） ----
 /** 分配一块大内存（板子上放 PSRAM，按 cache line 对齐） */
 void *ui_plat_alloc(size_t size);
 /** 把屏幕当前显示的内容复制到 dst（RGB565，1024x600）。做不到返回 false，由调用方用 lv_snapshot 代替 */
 bool ui_plat_capture_screen(void *dst, size_t size);
+/** 硬件切页滑动（板子上用 PPA 直接写帧缓冲）。返回画的帧数；不支持/失败返回 -1，界面会退回 LVGL 动画。 */
+int ui_plat_slide(const void *old_img, const void *new_img, int dir, uint32_t ms);

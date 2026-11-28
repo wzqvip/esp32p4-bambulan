@@ -14,3 +14,7 @@ esp_err_t board_display_init(lv_display_t **out_disp);
 esp_err_t board_set_backlight(uint32_t percent);
 /** 把当前帧缓冲（屏幕正在显示的内容，RGB565）复制到 dst */
 bool board_copy_framebuffer(void *dst, size_t size);
+/** 切页滑动：用 PPA 按 vsync 把两张整屏 RGB565 快照直接拷进帧缓冲（不经过 LVGL 绘制）。
+ *  dir>0 新页从右边进来，<0 从左边进来。阻塞 ms 毫秒；返回画了多少帧，失败返回 -1。
+ *  调用期间必须拿着 LVGL 锁（不能有 LVGL 刷屏同时进行）。 */
+int board_slide(const void *old_img, const void *new_img, int dir, uint32_t ms);

@@ -61,6 +61,7 @@ void sys_set_backlight(int p) { printf("backlight %d\n", p); }
 void sys_restart(void) { printf("restart\n"); }
 void *ui_plat_alloc(size_t n) { return malloc(n); }
 bool ui_plat_capture_screen(void *d, size_t n) { return false; }
+int ui_plat_slide(const void *a, const void *b, int dir, uint32_t ms) { return -1; }
 void sys_info(char *b, size_t n)
 {
     snprintf(b, n, "固件版本：sim\n编译时间：-\nESP-IDF：-\n运行时间：0天 00:01:23\n可用内存：内部 312 KB，PSRAM 28123 KB");

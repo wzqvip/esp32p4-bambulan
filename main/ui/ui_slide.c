@@ -1,5 +1,11 @@
 // 切页滑动动画：先把新旧两页各“拍”成一张整屏图片，动画期间只移动这两张图片。
 //
+// 板子上（ui_plat_slide → board_slide）：动画完全不经过 LVGL，由 PPA（硬件 DMA）每个 vsync
+// 把两张图的对应部分直接拷进帧缓冲，按条带从上往下拷、跑在扫描线前面，所以不撕裂，帧率跟屏幕刷新走。
+// 实测对比（点进单台页）：LVGL 自带动画 18.6fps；LVGL 移动两张图 26.8fps 且有撕裂。
+// 瓶颈不是等送屏（wait≈0），而是每帧 CPU 在 PSRAM 里搬/画 1.2MB 像素。
+// 下面 LVGL 移动两张图的做法保留作为退路（模拟器、PPA 失败时）。
+//
 // 为什么：LVGL 自带的 lv_screen_load_anim 每一帧都要把两页上所有控件（几十个中文 label、圆角框、
 // 摄像头画面、缩放的预览图……）重新软件绘制一遍，实测一帧 35~50ms，只有 18~23fps。
 // 改成两张图以后，每帧只剩两次整块 RGB565 拷贝（无缩放、无混合，LVGL 走 memcpy），
@@ -20,8 +26,9 @@
 static lv_obj_t *s_scr, *s_img_old, *s_img_new, *s_target;
 static lv_draw_buf_t s_buf_old, s_buf_new;
 static bool s_ready, s_busy;
-static int s_dir;
-static uint32_t s_prep_ms;   // 上次切页准备两张快照用了多久   // +1：新页从右边进来；-1：从左边进来
+static int s_dir;            // +1：新页从右边进来；-1：从左边进来
+static uint32_t s_prep_ms;   // 上次切页准备两张快照用了多久
+static int s_hw_frames = -1; // 上次硬件滑动画了多少帧
 
 static bool init_bufs(void)
 {
@@ -61,6 +68,8 @@ bool ui_slide_busy(void) { return s_busy || lv_display_get_screen_prev(NULL) != 
 
 uint32_t ui_slide_prep_ms(void) { return s_prep_ms; }
 
+int ui_slide_hw_frames(void) { return s_hw_frames; }
+
 void ui_slide_to(lv_obj_t *target, bool forward)
 {
     uint32_t ms = ui_page_anim_ms();
@@ -91,11 +100,20 @@ void ui_slide_to(lv_obj_t *target, bool forward)
         return;
     }
     s_prep_ms = lv_tick_elaps(t0);
+    s_dir = forward ? 1 : -1;
+    // 优先硬件滑动：同步跑完（拿着 LVGL 锁，期间 LVGL 不刷屏），然后直接切到目标页
+    s_busy = true;
+    int hw = ui_plat_slide(s_buf_old.data, s_buf_new.data, s_dir, ms);
+    s_busy = false;
+    if (hw >= 0) {
+        s_hw_frames = hw;
+        lv_screen_load(target);
+        return;
+    }
     lv_image_cache_drop(&s_buf_old);
     lv_image_cache_drop(&s_buf_new);
     lv_image_set_src(s_img_old, &s_buf_old);
     lv_image_set_src(s_img_new, &s_buf_new);
-    s_dir = forward ? 1 : -1;
     s_target = target;
     anim_x(NULL, 0);
     s_busy = true;

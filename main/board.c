@@ -12,14 +12,35 @@
 #include "esp_ldo_regulator.h"
 #include "esp_check.h"
 #include "esp_log.h"
+#include "esp_timer.h"
 #include "esp_lvgl_port.h"
+#include "esp_attr.h"
 #include "esp_cache.h"
+#include "driver/ppa.h"
+#include "freertos/semphr.h"
 #include <string.h>
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
 
 static const char *TAG = "board";
 static esp_lcd_panel_handle_t s_panel;
+static SemaphoreHandle_t s_vsync;
+static ppa_client_handle_t s_slide_ppa;
+
+// DMA2D 把 LVGL 画好的区域拷进帧缓冲后：通知 LVGL（和 esp_lvgl_port 自己的回调做的事一样）
+static IRAM_ATTR bool on_trans_done(esp_lcd_panel_handle_t p, esp_lcd_dpi_panel_event_data_t *e, void *ctx)
+{
+    lv_display_flush_ready((lv_display_t *)ctx);
+    return false;
+}
+
+// 屏幕扫完一帧（vsync）：给切页滑动用来对齐帧
+static IRAM_ATTR bool on_vsync(esp_lcd_panel_handle_t p, esp_lcd_dpi_panel_event_data_t *e, void *ctx)
+{
+    BaseType_t hp = pdFALSE;
+    if (s_vsync) xSemaphoreGiveFromISR(s_vsync, &hp);
+    return hp == pdTRUE;
+}
 
 #if CONFIG_BBL_LCD_SWAP_BYTES
 #define LCD_SWAP_BYTES 1
@@ -207,6 +228,11 @@ esp_err_t board_display_init(lv_display_t **out_disp)
     const lvgl_port_display_dsi_cfg_t dsi_cfg = {.flags.avoid_tearing = false};
     lv_display_t *disp = lvgl_port_add_disp_dsi(&disp_cfg, &dsi_cfg);
     if (!disp) return ESP_FAIL;
+    // 重新挂 DPI 回调：多挂一个 vsync 回调给切页滑动用（register 会覆盖 esp_lvgl_port 挂的，所以 flush_ready 也自己做）。
+    // 这不改变刷屏方式：仍然是局部渲染 + 1 块帧缓冲，vsync 只是用来计时。
+    s_vsync = xSemaphoreCreateBinary();
+    const esp_lcd_dpi_panel_event_callbacks_t cbs = {.on_color_trans_done = on_trans_done, .on_refresh_done = on_vsync};
+    ESP_ERROR_CHECK(esp_lcd_dpi_panel_register_event_callbacks(s_panel, &cbs, disp));
 
     if (tp) {
         const lvgl_port_touch_cfg_t tcfg = {.disp = disp, .handle = tp};
@@ -229,3 +255,79 @@ bool board_copy_framebuffer(void *dst, size_t size)
     return true;
 }
 
+
+static float ease_out_cubic(float t)
+{
+    float u = 1.0f - t;
+    return 1.0f - u * u * u;
+}
+
+// 一块 SRM 拷贝：src 的 [sx, sx+w) 列、[y, y+h) 行 → 帧缓冲的 dx 列
+static bool blit(void *fb, size_t fb_size, const void *src, int sx, int dx, int w, int y, int h)
+{
+    if (w <= 0) return true;
+    ppa_srm_oper_config_t op = {
+        .in = {.buffer = src, .pic_w = BOARD_LCD_H_RES, .pic_h = BOARD_LCD_V_RES, .block_w = w, .block_h = h,
+               .block_offset_x = sx, .block_offset_y = y, .srm_cm = PPA_SRM_COLOR_MODE_RGB565},
+        .out = {.buffer = fb, .buffer_size = fb_size, .pic_w = BOARD_LCD_H_RES, .pic_h = BOARD_LCD_V_RES,
+                .block_offset_x = dx, .block_offset_y = y, .srm_cm = PPA_SRM_COLOR_MODE_RGB565},
+        .rotation_angle = PPA_SRM_ROTATION_ANGLE_0,
+        .scale_x = 1.0f,
+        .scale_y = 1.0f,
+        .mode = PPA_TRANS_MODE_BLOCKING,
+    };
+    return ppa_do_scale_rotate_mirror(s_slide_ppa, &op) == ESP_OK;
+}
+
+int board_slide(const void *old_img, const void *new_img, int dir, uint32_t ms)
+{
+    const int W = BOARD_LCD_H_RES, H = BOARD_LCD_V_RES, STRIP = 60;
+    void *fb = NULL;
+    size_t fb_size = (size_t)W * H * 2;
+    if (!s_panel || !s_vsync || esp_lcd_dpi_panel_get_frame_buffer(s_panel, 1, &fb) != ESP_OK || !fb) return -1;
+    if (!s_slide_ppa) {
+        ppa_client_config_t pcfg = {.oper_type = PPA_OPERATION_SRM, .max_pending_trans_num = 1};
+        if (ppa_register_client(&pcfg, &s_slide_ppa) != ESP_OK) return -1;
+    }
+    // CPU 写过的两张快照先整体写回 PSRAM（PPA 驱动每块也会同步，这里一次做完后它那边基本是空操作）
+    esp_cache_msync((void *)old_img, fb_size, ESP_CACHE_MSYNC_FLAG_DIR_C2M | ESP_CACHE_MSYNC_FLAG_UNALIGNED);
+    esp_cache_msync((void *)new_img, fb_size, ESP_CACHE_MSYNC_FLAG_DIR_C2M | ESP_CACHE_MSYNC_FLAG_UNALIGNED);
+    // 等 LVGL 可能还没送完的最后一块（DMA2D）
+    vTaskDelay(pdMS_TO_TICKS(6));
+
+    int64_t t0 = esp_timer_get_time(), dur = (int64_t)ms * 1000;
+    int frames = 0, missed = 0;
+    int64_t copy_max = 0, copy_sum = 0;
+    xSemaphoreTake(s_vsync, 0);
+    for (;;) {
+        // 每帧等屏幕扫完上一帧再开始拷，从上往下按条带拷：PPA 比扫描快，始终跑在扫描线前面，不撕裂
+        if (xSemaphoreTake(s_vsync, pdMS_TO_TICKS(50)) != pdTRUE) missed++;
+        int64_t c0 = esp_timer_get_time();
+        int64_t el = esp_timer_get_time() - t0;
+        float t = el >= dur ? 1.0f : (float)el / dur;
+        int off = (int)(W * ease_out_cubic(t) + 0.5f);
+        if (off > W) off = W;
+        for (int y = 0; y < H; y += STRIP) {
+            int h = H - y < STRIP ? H - y : STRIP;
+            bool ok;
+            if (dir > 0) {   // 新页从右边进来
+                ok = blit(fb, fb_size, old_img, off, 0, W - off, y, h) &&
+                     blit(fb, fb_size, new_img, 0, W - off, off, y, h);
+            } else {         // 新页从左边进来
+                ok = blit(fb, fb_size, new_img, W - off, 0, off, y, h) &&
+                     blit(fb, fb_size, old_img, 0, off, W - off, y, h);
+            }
+            if (!ok) return -1;
+        }
+        int64_t c = esp_timer_get_time() - c0;
+        copy_sum += c;
+        if (c > copy_max) copy_max = c;
+        frames++;
+        if (t >= 1.0f) break;
+    }
+    int64_t total = esp_timer_get_time() - t0;
+    ESP_LOGI(TAG, "slide: %d frames in %d ms (%.1f fps), PPA copy avg %.1f max %.1f ms, vsync timeouts %d", frames,
+             (int)(total / 1000), total > 0 ? frames * 1e6 / total : 0.0, copy_sum / 1000.0 / frames, copy_max / 1000.0,
+             missed);
+    return frames;
+}
