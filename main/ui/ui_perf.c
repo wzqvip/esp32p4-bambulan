@@ -71,7 +71,6 @@ static void stats_log(const char *what, const stats_t *s)
 
 static void disp_event(lv_event_t *e)
 {
-    lv_display_t *disp = lv_event_get_target(e);
     int64_t now = esp_timer_get_time();
     switch (lv_event_get_code(e)) {
     case LV_EVENT_REFR_START:
