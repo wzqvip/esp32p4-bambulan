@@ -8,6 +8,7 @@
 #include "esp_log.h"
 #include "esp_netif.h"
 #include "esp_netif_sntp.h"
+#include "settings.h"
 #include "esp_wifi.h"
 #include "sdkconfig.h"
 
@@ -40,13 +41,12 @@ static void on_wifi(void *arg, esp_event_base_t base, int32_t id, void *data)
 esp_err_t net_start(net_ready_cb_t cb)
 {
     s_ready_cb = cb;
-    setenv("TZ", CONFIG_BBL_TIMEZONE, 1);
-    tzset();
 
     ESP_ERROR_CHECK(esp_netif_init());
     ESP_ERROR_CHECK(esp_event_loop_create_default());
 
-    if (strlen(CONFIG_BBL_WIFI_SSID) == 0) {
+    const settings_t *st = settings_get();
+    if (strlen(st->wifi_ssid) == 0) {
         ESP_LOGE(TAG, "Wi-Fi SSID not set (idf.py menuconfig -> 拓竹屏配置)");
         s_state = NET_NO_CONFIG;
         return ESP_ERR_INVALID_STATE;
@@ -59,9 +59,9 @@ esp_err_t net_start(net_ready_cb_t cb)
     ESP_ERROR_CHECK(esp_event_handler_register(IP_EVENT, IP_EVENT_STA_GOT_IP, on_wifi, NULL));
 
     wifi_config_t wc = {0};
-    strlcpy((char *)wc.sta.ssid, CONFIG_BBL_WIFI_SSID, sizeof(wc.sta.ssid));
-    strlcpy((char *)wc.sta.password, CONFIG_BBL_WIFI_PASSWORD, sizeof(wc.sta.password));
-    wc.sta.threshold.authmode = strlen(CONFIG_BBL_WIFI_PASSWORD) ? WIFI_AUTH_WPA_PSK : WIFI_AUTH_OPEN;
+    strlcpy((char *)wc.sta.ssid, st->wifi_ssid, sizeof(wc.sta.ssid));
+    strlcpy((char *)wc.sta.password, st->wifi_pass, sizeof(wc.sta.password));
+    wc.sta.threshold.authmode = strlen(st->wifi_pass) ? WIFI_AUTH_WPA_PSK : WIFI_AUTH_OPEN;
     wc.sta.pmf_cfg.capable = true;
     wc.sta.sae_pwe_h2e = WPA3_SAE_PWE_BOTH;
 

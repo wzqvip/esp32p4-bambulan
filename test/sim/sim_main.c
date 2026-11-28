@@ -10,6 +10,7 @@
 #include "net.h"
 #include "printer.h"
 #include "ui.h"
+#include "settings.h"
 
 static int64_t s_ms;
 int64_t esp_timer_get_time(void) { return s_ms * 1000; }
@@ -56,6 +57,12 @@ net_state_t net_state(void) { return NET_CONNECTED; }
 int net_rssi(void) { return -52; }
 bool net_time_valid(void) { return true; }
 void net_ip_str(char *b, int n) { snprintf(b, n, "192.168.1.50"); }
+void sys_set_backlight(int p) { printf("backlight %d\n", p); }
+void sys_restart(void) { printf("restart\n"); }
+void sys_info(char *b, size_t n)
+{
+    snprintf(b, n, "固件版本：sim\n编译时间：-\nESP-IDF：-\n运行时间：0天 00:01:23\n可用内存：内部 312 KB，PSRAM 28123 KB");
+}
 
 
 // ---- 假摄像头：一号机给一张渐变图当画面，二号机模拟被拒 ----
@@ -239,6 +246,7 @@ int main(void)
     strcpy(b->vt.type, "PETG");
     b->vt.color = 0x5A657B;
 
+    settings_init();
     ui_init();
     fake_camera_frame();
     fake_cover();
@@ -254,7 +262,7 @@ int main(void)
     shot("detail_confirm_stop");
 
     // 第二轮：二号机详情（只读 + 命令被拒）以及一号机访问码错误
-    lv_obj_t *mb = lv_obj_get_child(lv_layer_top(), 0);
+    lv_obj_t *mb = lv_obj_get_child(lv_layer_top(), -1);
     if (mb) lv_obj_delete(mb);   // 关掉确认框（模拟器里直接删）
     tap(70, 32);                 // 返回
     run(400);
@@ -270,5 +278,19 @@ int main(void)
     tap(70, 32);
     run(600);
     shot("overview_auth_failed");
+
+    // 设置页
+    tap(255, 32);
+    run(400);
+    shot("settings_display");
+    tap(120, 104 + 66 * 1);
+    run(300);
+    shot("settings_time");
+    tap(120, 104 + 66 * 3);
+    run(300);
+    shot("settings_printer");
+    tap(600, 290);
+    run(400);
+    shot("settings_edit");
     return 0;
 }

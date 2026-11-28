@@ -1,40 +1,18 @@
 // 界面：双机概览页 + 单机详情/控制页（LVGL 9，1024x600）
 // 布局参考 ha-bambulab 的打印机卡片：摄像头实时画面、任务名、进度条、开始/剩余/预计完成、层数、温度、AMS 料位。
 #include "ui.h"
+#include "ui_priv.h"
 
 #include <stdio.h>
 #include <string.h>
 #include <time.h>
 
 #include "esp_timer.h"
-#if __has_include("sdkconfig.h")
-#include "sdkconfig.h"
-#endif
-#ifndef CONFIG_BBL_PAGE_ANIM_MS
-#define CONFIG_BBL_PAGE_ANIM_MS 0
-#endif
 
 #include "camera.h"
 #include "cover.h"
 #include "net.h"
 #include "printer.h"
-
-// ---------- 配色 ----------
-#define C_BG lv_color_hex(0x0F1317)
-#define C_CARD lv_color_hex(0x1B222A)
-#define C_CARD2 lv_color_hex(0x252E38)
-#define C_TEXT lv_color_hex(0xE8EDF2)
-#define C_MUTED lv_color_hex(0x8A96A3)
-#define C_GREEN lv_color_hex(0x00AE42)
-#define C_BLUE lv_color_hex(0x3D8BFD)
-#define C_WARN lv_color_hex(0xF5A623)
-#define C_RED lv_color_hex(0xE5484D)
-#define C_TEAL lv_color_hex(0x2BB3A3)
-#define C_BLACK lv_color_hex(0x000000)
-
-#define FONT_S (&ui_font_cn_20)
-#define FONT_L (&ui_font_cn_28)
-#define FONT_NUM (&ui_font_num_56)
 
 #define EDIT_HOLD_MS 4000   // 用户刚改过的控件，这段时间内不被打印机回报覆盖
 #define TEMP_SEND_DELAY_MS 900
@@ -586,12 +564,19 @@ static void build_topbar(lv_obj_t *scr, const char *title, lv_obj_t **clock, lv_
     }
 }
 
+static void settings_clicked(lv_event_t *e)
+{
+    ui_settings_open(s_overview);
+}
+
 static void build_overview(void)
 {
     s_overview = lv_obj_create(NULL);
     set_bg_color(s_overview, C_BG);
     lv_obj_remove_flag(s_overview, LV_OBJ_FLAG_SCROLLABLE);
     build_topbar(s_overview, "Bambu-Lan", &s_clock, &s_wifi);
+    lv_obj_t *gear = mk_btn(s_overview, LV_SYMBOL_SETTINGS " 设置", C_CARD, 110, 40, settings_clicked, NULL, NULL);
+    lv_obj_set_pos(gear, 200, 12);
 
     int n = printers_count();
     for (int i = 0; i < n; i++) {
@@ -604,7 +589,7 @@ static void build_overview(void)
 static void back_clicked(lv_event_t *e)
 {
     s_detail_idx = -1;
-    lv_screen_load_anim(s_overview, LV_SCR_LOAD_ANIM_MOVE_RIGHT, CONFIG_BBL_PAGE_ANIM_MS, 0, false);
+    lv_screen_load_anim(s_overview, LV_SCR_LOAD_ANIM_MOVE_RIGHT, ui_page_anim_ms(), 0, false);
 }
 
 static void set_status(const char *txt, lv_color_t color)
@@ -889,7 +874,7 @@ static void show_detail(int idx)
     s_d.fan_edit_ms = s_d.light_edit_ms = s_d.speed_edit_ms = 0;
     printer_snapshot_t s;
     if (printer_get(idx, &s)) s_d.last_result_seq = s.st.result_seq;
-    lv_screen_load_anim(s_d.scr, LV_SCR_LOAD_ANIM_MOVE_LEFT, CONFIG_BBL_PAGE_ANIM_MS, 0, false);
+    lv_screen_load_anim(s_d.scr, LV_SCR_LOAD_ANIM_MOVE_LEFT, ui_page_anim_ms(), 0, false);
 }
 
 static const char *cmd_name(const char *cmd)
@@ -1057,11 +1042,21 @@ static void refresh_cb(lv_timer_t *t)
     }
 
     printer_snapshot_t s;
+    static bbl_gcode_state_t last_gs[PRINTER_MAX];
+    bool printing = false, wake = false;
     for (int i = 0; i < printers_count(); i++) {
         if (!printer_get(i, &s)) continue;
         update_card(&s_cards[i], i, &s);
         if (i == s_detail_idx) update_detail(&s);
+        bbl_gcode_state_t gs = s.st.valid ? s.st.gcode_state : BBL_GS_UNKNOWN;
+        if (gs == BBL_GS_RUNNING || gs == BBL_GS_PREPARE || gs == BBL_GS_PAUSE) printing = true;
+        // 打印开始/暂停/完成/失败时亮屏（第一次收到状态不算）
+        if (i < PRINTER_MAX && gs != last_gs[i]) {
+            if (last_gs[i] != BBL_GS_UNKNOWN && gs != BBL_GS_UNKNOWN) wake = true;
+            last_gs[i] = gs;
+        }
     }
+    ui_settings_tick(printing, wake);
 }
 
 void ui_init(void)
@@ -1072,6 +1067,7 @@ void ui_init(void)
 
     build_overview();
     build_detail();
+    ui_settings_build();
     lv_screen_load(s_overview);
     refresh_cb(NULL);
     lv_timer_create(refresh_cb, 250, NULL);

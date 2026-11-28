@@ -1,4 +1,5 @@
 #include "printer.h"
+#include "settings.h"
 
 #include <stdio.h>
 #include <string.h>
@@ -191,20 +192,12 @@ static void resync_timer_cb(void *arg)
 static void load_cfg(int idx, printer_cfg_t *c)
 {
     memset(c, 0, sizeof(*c));
-    if (idx == 0) {
-        strlcpy(c->name, CONFIG_BBL_P1_NAME, sizeof(c->name));
-        strlcpy(c->host, CONFIG_BBL_P1_HOST, sizeof(c->host));
-        strlcpy(c->serial, CONFIG_BBL_P1_SERIAL, sizeof(c->serial));
-        strlcpy(c->access_code, CONFIG_BBL_P1_ACCESS_CODE, sizeof(c->access_code));
-    }
-#if CONFIG_BBL_PRINTER_COUNT >= 2
-    if (idx == 1) {
-        strlcpy(c->name, CONFIG_BBL_P2_NAME, sizeof(c->name));
-        strlcpy(c->host, CONFIG_BBL_P2_HOST, sizeof(c->host));
-        strlcpy(c->serial, CONFIG_BBL_P2_SERIAL, sizeof(c->serial));
-        strlcpy(c->access_code, CONFIG_BBL_P2_ACCESS_CODE, sizeof(c->access_code));
-    }
-#endif
+    if (idx < 0 || idx >= SETTINGS_PRINTERS) return;
+    const settings_printer_t *p = &settings_get()->printer[idx];
+    strlcpy(c->name, p->name, sizeof(c->name));
+    strlcpy(c->host, p->host, sizeof(c->host));
+    strlcpy(c->serial, p->serial, sizeof(c->serial));
+    strlcpy(c->access_code, p->access_code, sizeof(c->access_code));
 }
 
 esp_err_t printers_init(void)

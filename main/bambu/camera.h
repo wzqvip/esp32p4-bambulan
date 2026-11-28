@@ -18,6 +18,7 @@ typedef enum {
     CAMERA_REJECTED,       // 连上了但打印机不给画面（访问码错 / 未开开发者模式 / 未开局域网视频）
     CAMERA_CONN_FAILED,    // 连不上 6000 端口
     CAMERA_DECODE_FAILED,
+    CAMERA_DISABLED,       // 设置里关掉了实时画面
 } camera_state_t;
 
 /** 把 lv_image 绑定到第 idx 台打印机的画面（在 LVGL 锁内、camera_start_all 之前调用）。 */

@@ -9,6 +9,10 @@
 |---|---|---|
 | ![](docs/screenshots/detail_running.png) | ![](docs/screenshots/detail_confirm_stop.png) | ![](docs/screenshots/detail_readonly.png) |
 
+| 设置：显示 | 设置：打印机 | 屏幕键盘 |
+|---|---|---|
+| ![](docs/screenshots/settings_display.png) | ![](docs/screenshots/settings_printer.png) | ![](docs/screenshots/settings_edit.png) |
+
 > 截图是在电脑上用同一份界面代码渲染的（`test/sim`），不是实拍。
 
 ## 功能（第一版）
@@ -21,6 +25,8 @@
 - 自动识别打印机是否开启了开发者模式（`print.fun` / `flag3`），未开启时标记“只读”
 - 断线自动重连，每 5 分钟、或 90 秒没收到消息时请求一次全量状态
 - SNTP 对时（阿里云 NTP），显示时钟和预计完成时间
+- 设置页（概览左上角“设置”）：亮度、自动息屏（打印状态变化时自动亮屏）、切页动画、摄像头开关、时区、
+  Wi-Fi、打印机 IP / 序列号 / 访问码、重启和恢复默认。存在 NVS 里；menuconfig 的值只作为第一次开机的默认值
 - 刷屏用局部渲染 + 单帧缓冲（同官方例程）。双帧缓冲 vsync 切换在这块屏上会整屏闪，切页默认直接切换
 - menuconfig「调试」里有：串口打印渲染耗时/帧率、自动来回切页、摄像头调试模式，默认全关
 

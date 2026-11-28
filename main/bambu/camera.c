@@ -17,6 +17,7 @@
 #include "sdkconfig.h"
 
 #include "printer.h"
+#include "settings.h"
 
 static const char *TAG = "camera";
 
@@ -67,6 +68,7 @@ const char *camera_state_text(camera_state_t st)
     case CAMERA_REJECTED: return "打印机拒绝了视频连接\n（被 Bambu Studio 占用，或访问码错误）";
     case CAMERA_CONN_FAILED: return "连不上摄像头，稍后重试\n（电脑上开着 Bambu Studio 的摄像头画面时会被占用）";
     case CAMERA_DECODE_FAILED: return "画面解码失败";
+    case CAMERA_DISABLED: return "实时画面已关闭\n（可在设置里打开）";
     default: return "";
     }
 }
@@ -180,6 +182,15 @@ static void present(cam_t *c)
     lvgl_port_unlock();
 }
 
+// 关掉实时画面：清掉已显示的最后一帧
+static void clear_frame(cam_t *c)
+{
+    if (!lvgl_port_lock(1000)) return;
+    for (int i = 0; i < c->nimg; i++) lv_image_set_src(c->imgs[i], NULL);
+    c->has_frame = false;
+    lvgl_port_unlock();
+}
+
 static void build_auth(uint8_t out[80], const char *code)
 {
     memset(out, 0, 80);
@@ -207,6 +218,14 @@ static void cam_task(void *arg)
     free(snap);
 
     for (;;) {
+        if (!settings_get()->camera_on) {
+            if (c->state != CAMERA_DISABLED) {
+                c->state = CAMERA_DISABLED;
+                clear_frame(c);
+            }
+            vTaskDelay(pdMS_TO_TICKS(500));
+            continue;
+        }
         c->state = CAMERA_CONNECTING;
         esp_tls_cfg_t tcfg = {.timeout_ms = 10000};
 #if CONFIG_BBL_TLS_VERIFY
@@ -226,7 +245,7 @@ static void cam_task(void *arg)
             }
             ESP_LOGI(TAG, "[%s] connected, sending auth", cfg->name);
             if (esp_tls_conn_write(tls, auth, sizeof(auth)) == sizeof(auth)) {
-                while (read_exact(tls, hdr, sizeof(hdr))) {
+                while (settings_get()->camera_on && read_exact(tls, hdr, sizeof(hdr))) {
                     uint32_t size = hdr[0] | hdr[1] << 8 | hdr[2] << 16 | (uint32_t)hdr[3] << 24;
                     if (size < 4 || size > JPEG_MAX) {
                         ESP_LOGW(TAG, "[%s] bad frame size %lu", cfg->name, (unsigned long)size);

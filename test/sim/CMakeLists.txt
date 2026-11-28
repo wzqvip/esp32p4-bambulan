@@ -11,6 +11,6 @@ target_include_directories(lvgl PUBLIC ${LVGL_DIR} ${CMAKE_CURRENT_SOURCE_DIR})
 target_compile_definitions(lvgl PUBLIC LV_CONF_INCLUDE_SIMPLE)
 
 file(GLOB FONT_SRCS ${MAIN}/ui/fonts/*.c)
-add_executable(sim sim_main.c ${MAIN}/ui/ui.c ${FONT_SRCS} ${MAIN}/bambu/bambu_parse.c ${CJSON_DIR}/cJSON.c)
-target_include_directories(sim PRIVATE shim ${MAIN} ${MAIN}/bambu ${MAIN}/ui ${CJSON_DIR})
+add_executable(sim sim_main.c ${MAIN}/ui/ui.c ${MAIN}/ui/ui_settings.c ${MAIN}/settings.c ${FONT_SRCS} ${MAIN}/bambu/bambu_parse.c ${CJSON_DIR}/cJSON.c)
+target_include_directories(sim PRIVATE shim ${MAIN}  ${MAIN}/bambu ${MAIN}/ui ${CJSON_DIR})
 target_link_libraries(sim lvgl m)

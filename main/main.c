@@ -10,6 +10,7 @@
 #include "discover.h"
 #include "net.h"
 #include "printer.h"
+#include "settings.h"
 #include "ui.h"
 
 static const char *TAG = "main";
@@ -32,6 +33,7 @@ void app_main(void)
         err = nvs_flash_init();
     }
     ESP_ERROR_CHECK(err);
+    settings_init();
 
     ESP_ERROR_CHECK(printers_init());
 
@@ -42,7 +44,7 @@ void app_main(void)
         ui_debug_init(disp);
         lvgl_port_unlock();
     }
-    board_set_backlight(CONFIG_BBL_BACKLIGHT_PERCENT);
+    board_set_backlight(settings_get()->brightness);
 
     if (net_start(on_network_ready) != ESP_OK) {
         ESP_LOGE(TAG, "network not started, check Wi-Fi settings in menuconfig");
