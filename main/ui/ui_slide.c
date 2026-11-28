@@ -10,6 +10,9 @@
 #include <string.h>
 
 #include "ui_priv.h"
+#if __has_include("sdkconfig.h")
+#include "sdkconfig.h"
+#endif
 
 #define W 1024
 #define H 600
@@ -54,7 +57,7 @@ static void anim_done(lv_anim_t *a)
     s_busy = false;
 }
 
-bool ui_slide_busy(void) { return s_busy; }
+bool ui_slide_busy(void) { return s_busy || lv_display_get_screen_prev(NULL) != NULL; }
 
 uint32_t ui_slide_prep_ms(void) { return s_prep_ms; }
 
@@ -62,6 +65,13 @@ void ui_slide_to(lv_obj_t *target, bool forward)
 {
     uint32_t ms = ui_page_anim_ms();
     if (s_busy) return;
+#if CONFIG_BBL_DEBUG_LVGL_SCREEN_ANIM
+    // 对比用：LVGL 自带的整屏滑动（每帧重画两页所有控件）
+    if (ms) {
+        lv_screen_load_anim(target, forward ? LV_SCR_LOAD_ANIM_MOVE_LEFT : LV_SCR_LOAD_ANIM_MOVE_RIGHT, ms, 0, false);
+        return;
+    }
+#endif
     if (ms == 0 || !init_bufs()) {
         lv_screen_load(target);
         return;

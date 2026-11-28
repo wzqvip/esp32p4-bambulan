@@ -90,6 +90,10 @@ menu "拓竹屏配置 (Bambu screen)"
             bool "自动打开设置页，每 5 秒切到下一个分区（拍照检查用）"
             default n
 
+        config BBL_DEBUG_LVGL_SCREEN_ANIM
+            bool "切页动画改用 LVGL 自带的 lv_screen_load_anim（对比测量用）"
+            default n
+
         config BBL_DEBUG_NO_CAMERA
             bool "不连接摄像头（排查闪烁用）"
             default n
