@@ -68,6 +68,7 @@ typedef struct {
     edit_val_t nozzle_edit, bed_edit;
     int64_t fan_edit_ms, light_edit_ms, speed_edit_ms;
     uint32_t last_result_seq;
+    int32_t link_align_w;   // 上次对齐时状态标签的宽度
 } detail_t;
 
 static lv_obj_t *s_overview;
@@ -91,6 +92,20 @@ static void set_text_color(lv_obj_t *o, lv_color_t c)
 static void set_bg_color(lv_obj_t *o, lv_color_t c)
 {
     if (!lv_color_eq(lv_obj_get_style_bg_color(o, 0), c)) lv_obj_set_style_bg_color(o, c, 0);
+}
+
+static void set_ind_color(lv_obj_t *o, lv_color_t c)
+{
+    if (!lv_color_eq(lv_obj_get_style_bg_color(o, LV_PART_INDICATOR), c))
+        lv_obj_set_style_bg_color(o, c, LV_PART_INDICATOR);
+}
+
+// 文字变了才改并重新对齐（对齐本身也会触发重画）
+static bool set_text_changed(lv_obj_t *l, const char *txt)
+{
+    if (strcmp(lv_label_get_text(l), txt) == 0) return false;
+    lv_label_set_text(l, txt);
+    return true;
 }
 
 static void set_image_opa(lv_obj_t *o, lv_opa_t v)
@@ -277,7 +292,7 @@ static void update_ams_chip(ams_row_t *a, int i, const bbl_tray_t *t, bool activ
     if (t->loaded && t->remain >= 0) {
         set_hidden(a->remain[i], false);
         lv_bar_set_value(a->remain[i], t->remain, LV_ANIM_OFF);
-        lv_obj_set_style_bg_color(a->remain[i], t->remain < 15 ? C_WARN : C_TEAL, LV_PART_INDICATOR);
+        set_ind_color(a->remain[i], t->remain < 15 ? C_WARN : C_TEAL);
     } else {
         set_hidden(a->remain[i], true);
     }
@@ -380,7 +395,7 @@ static void set_badge(lv_obj_t *badge, const printer_snapshot_t *s)
 static void update_bar(lv_obj_t *bar, const bbl_status_t *st, bool has)
 {
     lv_bar_set_value(bar, has ? st->percent : 0, LV_ANIM_OFF);
-    lv_obj_set_style_bg_color(bar, has ? state_color(st->gcode_state) : C_CARD2, LV_PART_INDICATOR);
+    set_ind_color(bar, has ? state_color(st->gcode_state) : C_CARD2);
 }
 
 static const char *task_name(const bbl_status_t *st)
@@ -954,8 +969,11 @@ static void update_detail(const printer_snapshot_t *s)
     if (strcmp(lv_label_get_text(d->title), nm) != 0) set_text(d->title, nm);
     set_badge(d->state, s);
     snprintf(buf, sizeof(buf), "%s · %s", printer_link_name(s->link), cfg->host[0] ? cfg->host : "-");
-    set_text(d->link, buf);
-    lv_obj_align_to(d->link, d->state, LV_ALIGN_OUT_LEFT_MID, -16, 0);
+    lv_obj_update_layout(d->state);
+    if (set_text_changed(d->link, buf) || d->link_align_w != lv_obj_get_width(d->state)) {
+        d->link_align_w = lv_obj_get_width(d->state);
+        lv_obj_align_to(d->link, d->state, LV_ALIGN_OUT_LEFT_MID, -16, 0);
+    }
 
     update_camview(&d->cam[s_detail_idx], s_detail_idx, has, st->percent);
     set_text(d->file, has ? task_name(st) : "");
@@ -1070,8 +1088,7 @@ static void refresh_cb(lv_timer_t *t)
         case NET_DISCONNECTED: snprintf(wifi_txt, sizeof(wifi_txt), LV_SYMBOL_WIFI " 已断开"); break;
         case NET_CONNECTED: snprintf(wifi_txt, sizeof(wifi_txt), LV_SYMBOL_WIFI " %d dBm", net_rssi()); break;
         }
-        set_text(s_wifi, wifi_txt);
-        lv_obj_align_to(s_wifi, s_clock, LV_ALIGN_OUT_LEFT_MID, -20, 2);
+        if (set_text_changed(s_wifi, wifi_txt)) lv_obj_align_to(s_wifi, s_clock, LV_ALIGN_OUT_LEFT_MID, -20, 2);
     }
 
     printer_snapshot_t s;

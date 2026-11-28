@@ -1,6 +1,7 @@
 // 用户设置（NVS 命名空间 "bbl_set"，键 "cfg"，整份结构体存成一个 blob）
 #include "settings.h"
 
+#include <stddef.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -73,6 +74,7 @@ static void defaults(settings_t *s)
     s->sleep_when_printing = false;
     s->page_anim = CONFIG_BBL_PAGE_ANIM_MS > 0;
     s->camera_on = true;
+    s->perf_overlay = true;
     snprintf(s->tz, sizeof(s->tz), "%s", CONFIG_BBL_TIMEZONE);
     snprintf(s->wifi_ssid, sizeof(s->wifi_ssid), "%s", CONFIG_BBL_WIFI_SSID);
     snprintf(s->wifi_pass, sizeof(s->wifi_pass), "%s", CONFIG_BBL_WIFI_PASSWORD);
@@ -98,11 +100,13 @@ void settings_init(void)
     if (nvs_open("bbl_set", NVS_READONLY, &h) == ESP_OK) {
         blob_t *b = calloc(1, sizeof(*b));
         size_t len = sizeof(*b);
-        if (b && nvs_get_blob(h, "cfg", b, &len) == ESP_OK && len == sizeof(*b) && b->magic == SETTINGS_MAGIC &&
-            b->size == sizeof(settings_t)) {
-            s_cur = b->s;
+        // 新版本只会往 settings_t 末尾加字段：旧数据比现在短时，读出前面那部分，其余保持默认
+        size_t hdr = offsetof(blob_t, s);
+        if (b && nvs_get_blob(h, "cfg", b, &len) == ESP_OK && len > hdr && b->magic == SETTINGS_MAGIC &&
+            b->size == len - hdr && b->size <= sizeof(settings_t)) {
+            memcpy(&s_cur, &b->s, b->size);
             s_cur.tz[sizeof(s_cur.tz) - 1] = 0;
-            ESP_LOGI(TAG, "loaded from NVS");
+            ESP_LOGI(TAG, "loaded from NVS (%u bytes)", (unsigned)b->size);
         } else {
             ESP_LOGI(TAG, "no saved settings, using menuconfig defaults");
         }

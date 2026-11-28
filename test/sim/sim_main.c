@@ -169,6 +169,26 @@ static void tap(int x, int y)
     run(100);
 }
 
+static int s_inv_n;
+static bool s_inv_log;
+static void inv_cb(lv_event_t *e)
+{
+    const lv_area_t *a = lv_event_get_param(e);
+    s_inv_n++;
+    if (s_inv_log && a) printf("  invalidate %d,%d %dx%d\n", (int)a->x1, (int)a->y1, (int)lv_area_get_width(a), (int)lv_area_get_height(a));
+}
+
+// 内容不变时空跑一段时间，统计有多少次重画（应该是 0）
+static void idle_check(const char *what)
+{
+    run(1000);
+    s_inv_n = 0;
+    s_inv_log = true;
+    run(2000);
+    s_inv_log = false;
+    printf("idle %s: %d invalidations in 2s\n", what, s_inv_n);
+}
+
 static void shot(const char *name)
 {
     lv_refr_now(NULL);
@@ -252,10 +272,13 @@ int main(void)
     fake_cover();
     run(600);
     shot("overview");
+    lv_display_add_event_cb(lv_display_get_default(), inv_cb, LV_EVENT_INVALIDATE_AREA, NULL);
+    idle_check("overview");
 
     tap(260, 300);   // 点一号机
     run(600);
     shot("detail_running");
+    idle_check("detail");
 
     tap(544 + 20 + 220 + 104, 64 + 20 + 30);   // 停止按钮
     run(400);
@@ -283,6 +306,7 @@ int main(void)
     tap(255, 32);
     run(400);
     shot("settings_display");
+    idle_check("settings");
     tap(120, 104 + 66 * 1);
     run(300);
     shot("settings_time");

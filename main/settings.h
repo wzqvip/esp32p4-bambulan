@@ -30,6 +30,8 @@ typedef struct {
     char wifi_pass[65];
     // 打印机
     settings_printer_t printer[SETTINGS_PRINTERS];
+    // ---- 以下是后加的字段：只能往结构体末尾加，旧版本存的数据会保留前面部分 ----
+    bool perf_overlay;       // 右下角显示帧率 / CPU
 } settings_t;
 
 /** 从 NVS 读取设置（在 nvs_flash_init 之后、其他模块之前调用） */

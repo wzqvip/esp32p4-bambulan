@@ -12,6 +12,7 @@
 #include "printer.h"
 #include "settings.h"
 #include "ui.h"
+#include "ui_priv.h"
 
 static const char *TAG = "main";
 
@@ -42,6 +43,7 @@ void app_main(void)
     if (lvgl_port_lock(0)) {
         ui_init();
         ui_debug_init(disp);
+        ui_stats_init(disp);
         lvgl_port_unlock();
     }
     board_set_backlight(settings_get()->brightness);

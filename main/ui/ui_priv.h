@@ -36,3 +36,5 @@ uint32_t ui_page_anim_ms(void);
 void ui_settings_debug_next(void);
 /** 顶栏底色（墨绿渐变 + 绿色细线），在屏幕上其他控件之前或之后调用都行（会放到最底层） */
 void ui_header_band(lv_obj_t *scr);
+/** 右下角性能信息（ui_stats.c，只在板子上编译） */
+void ui_stats_init(lv_display_t *disp);

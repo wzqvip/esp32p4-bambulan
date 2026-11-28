@@ -24,7 +24,7 @@ static lv_obj_t *s_nav[NAV_N], *s_sec[NAV_N];
 static int s_cur_sec;
 
 // 显示
-static lv_obj_t *s_bright, *s_bright_val, *s_sleep_dd, *s_level_dd, *s_print_sw, *s_anim_sw, *s_cam_sw;
+static lv_obj_t *s_bright, *s_bright_val, *s_sleep_dd, *s_level_dd, *s_print_sw, *s_anim_sw, *s_cam_sw, *s_stats_sw;
 // 时间
 static lv_obj_t *s_now, *s_sync, *s_tz_dd;
 // Wi-Fi / 打印机：改的是 s_edit，保存时才写回
@@ -169,6 +169,8 @@ static void print_sw_changed(lv_event_t *e)
 
 static void anim_changed(lv_event_t *e) { SAVE_NOW(s->page_anim = lv_obj_has_state(s_anim_sw, LV_STATE_CHECKED)); }
 
+static void stats_changed(lv_event_t *e) { SAVE_NOW(s->perf_overlay = lv_obj_has_state(s_stats_sw, LV_STATE_CHECKED)); }
+
 static void cam_changed(lv_event_t *e) { SAVE_NOW(s->camera_on = lv_obj_has_state(s_cam_sw, LV_STATE_CHECKED)); }
 
 static int index_of_u16(const uint16_t *a, int n, int v)
@@ -215,6 +217,9 @@ static void build_display(lv_obj_t *sec)
 
     r = row(sec, "摄像头实时画面", "关闭后不再连接打印机摄像头");
     s_cam_sw = mk_switch(r, st->camera_on, cam_changed);
+
+    r = row(sec, "显示帧率和 CPU 占用", "右下角小字：FPS、1% low、每帧耗时、两个核的 CPU");
+    s_stats_sw = mk_switch(r, st->perf_overlay, stats_changed);
 }
 
 // ---------- 时间 ----------
