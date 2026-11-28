@@ -53,7 +53,7 @@ typedef struct {
 typedef struct {
     lv_obj_t *scr;
     lv_obj_t *title, *state, *link;
-    camview_t cam[PRINTER_MAX];   // 每台打印机一个（各自绑定到自己的取流），只显示当前那台
+    camview_t cam[PRINTER_UI_MAX];   // 每台打印机一个（各自绑定到自己的取流），只显示当前那台
     lv_obj_t *file, *pct, *bar;
     lv_obj_t *start, *eta, *remain, *layer, *nozzle, *bed, *fan, *speed_lbl, *note;
     ams_row_t ams;
@@ -73,7 +73,8 @@ typedef struct {
 
 static lv_obj_t *s_overview;
 static lv_obj_t *s_clock, *s_wifi;
-static card_t s_cards[PRINTER_MAX];
+static card_t s_cards[PRINTER_UI_MAX];
+static lv_obj_t *s_list;   // 首页可滚动的卡片区
 static detail_t s_d;
 static int s_detail_idx = -1;
 static lv_obj_t *s_confirm;
@@ -208,7 +209,7 @@ static void build_camview(camview_t *v, lv_obj_t *parent, int idx, int x, int y,
     lv_obj_set_size(v->img, CAMERA_VIEW_W, CAMERA_VIEW_H);
     lv_obj_center(v->img);
     lv_obj_remove_flag(v->img, LV_OBJ_FLAG_CLICKABLE);
-    camera_bind_image(idx, v->img);
+    if (!printer_is_demo(idx)) camera_bind_image(idx, v->img);
 
     v->pct = mk_label(v->box, FONT_NUM, C_TEXT, "");
     lv_obj_align(v->pct, LV_ALIGN_CENTER, 0, -24);
@@ -226,11 +227,19 @@ static void build_camview(camview_t *v, lv_obj_t *parent, int idx, int x, int y,
     lv_obj_center(v->cov_img);
     lv_obj_remove_flag(v->cov_img, LV_OBJ_FLAG_CLICKABLE);
     set_hidden(v->cov_box, true);
-    cover_bind_image(idx, v->cov_img);
+    if (!printer_is_demo(idx)) cover_bind_image(idx, v->cov_img);
 }
 
 static void update_camview(camview_t *v, int idx, bool has, int pct)
 {
+    if (printer_is_demo(idx)) {   // 演示机器：没有摄像头和预览图，只显示大号进度
+        char buf[16];
+        if (has) snprintf(buf, sizeof(buf), "%d%%", pct);
+        else snprintf(buf, sizeof(buf), "-");
+        set_text(v->pct, buf);
+        set_text(v->msg, "演示机器 · 没有实时画面");
+        return;
+    }
     if (cover_has_image(idx)) set_hidden(v->cov_box, false);
     else set_hidden(v->cov_box, true);
     camera_state_t cs = camera_state(idx);
@@ -470,9 +479,11 @@ static void card_clicked(lv_event_t *e)
     show_detail((int)(intptr_t)lv_event_get_user_data(e));
 }
 
-static void build_card(card_t *c, lv_obj_t *parent, int idx, int x)
+#define CARD_H 524
+
+static void build_card(card_t *c, lv_obj_t *parent, int idx, int x, int y0)
 {
-    c->card = mk_panel(parent, x, 64, 494, 524);
+    c->card = mk_panel(parent, x, y0, 494, CARD_H);
     lv_obj_set_style_pad_hor(c->card, 7, 0);
     lv_obj_set_style_pad_ver(c->card, 8, 0);
     lv_obj_add_flag(c->card, LV_OBJ_FLAG_CLICKABLE);
@@ -626,10 +637,23 @@ static void build_overview(void)
     lv_obj_t *gear = mk_btn(s_overview, LV_SYMBOL_SETTINGS " 设置", C_CARD, 110, 40, settings_clicked, NULL, NULL);
     lv_obj_set_pos(gear, 200, 12);
 
-    int n = printers_count();
+    // 卡片区：一行两张，多了就上下滚动（每次滑动停在整行上）
+    s_list = lv_obj_create(s_overview);
+    lv_obj_remove_style_all(s_list);
+    lv_obj_set_pos(s_list, 0, 56);
+    lv_obj_set_size(s_list, 1024, 600 - 56);
+    lv_obj_set_style_pad_top(s_list, 8, 0);
+    lv_obj_set_style_pad_bottom(s_list, 12, 0);
+    lv_obj_set_scroll_dir(s_list, LV_DIR_VER);
+    lv_obj_set_scroll_snap_y(s_list, LV_SCROLL_SNAP_START);
+    lv_obj_add_flag(s_list, LV_OBJ_FLAG_SCROLL_ONE);
+    lv_obj_set_scrollbar_mode(s_list, LV_SCROLLBAR_MODE_ACTIVE);
+    int n = printers_total();
+    if (n > PRINTER_UI_MAX) n = PRINTER_UI_MAX;
+    if (n <= 2) lv_obj_remove_flag(s_list, LV_OBJ_FLAG_SCROLLABLE);
     for (int i = 0; i < n; i++) {
-        int x = n == 1 ? (1024 - 494) / 2 : 12 + i * 506;
-        build_card(&s_cards[i], s_overview, i, x);
+        int x = n == 1 ? (1024 - 494) / 2 : 12 + (i % 2) * 506;
+        build_card(&s_cards[i], s_list, i, x, (i / 2) * (CARD_H + 12));
     }
 }
 
@@ -816,7 +840,7 @@ static void build_detail(void)
 
     // 左：实时画面 + 状态（面板 520 宽，内宽 480）
     lv_obj_t *l = mk_panel(d->scr, 12, 64, 520, 524);
-    for (int i = 0; i < printers_count() && i < PRINTER_MAX; i++) {
+    for (int i = 0; i < printers_total() && i < PRINTER_UI_MAX; i++) {
         build_camview(&d->cam[i], l, i, 0, 0, 120);
         set_hidden(d->cam[i].box, true);
     }
@@ -913,7 +937,7 @@ static void show_detail(int idx)
     s_detail_idx = idx;
     char nm[48];
     set_text(s_d.title, printer_display_name(idx, nm, sizeof(nm)));
-    for (int i = 0; i < printers_count() && i < PRINTER_MAX; i++) {
+    for (int i = 0; i < printers_total() && i < PRINTER_UI_MAX; i++) {
         if (i == idx) set_hidden(s_d.cam[i].box, false);
         else set_hidden(s_d.cam[i].box, true);
     }
@@ -972,7 +996,8 @@ static void update_detail(const printer_snapshot_t *s)
     printer_display_name(s_detail_idx, nm, sizeof(nm));
     if (strcmp(lv_label_get_text(d->title), nm) != 0) set_text(d->title, nm);
     set_badge(d->state, s);
-    snprintf(buf, sizeof(buf), "%s · %s", printer_link_name(s->link), cfg->host[0] ? cfg->host : "-");
+    if (printer_is_demo(s_detail_idx)) snprintf(buf, sizeof(buf), "演示机器 · 不联网");
+    else snprintf(buf, sizeof(buf), "%s · %s", printer_link_name(s->link), cfg->host[0] ? cfg->host : "-");
     lv_obj_update_layout(d->state);
     if (set_text_changed(d->link, buf) || d->link_align_w != lv_obj_get_width(d->state)) {
         d->link_align_w = lv_obj_get_width(d->state);
@@ -1098,10 +1123,11 @@ static void refresh_cb(lv_timer_t *t)
     printer_snapshot_t s;
     static bbl_gcode_state_t last_gs[PRINTER_MAX];
     bool printing = false, wake = false;
-    for (int i = 0; i < printers_count(); i++) {
+    for (int i = 0; i < printers_total() && i < PRINTER_UI_MAX; i++) {
         if (!printer_get(i, &s)) continue;
         update_card(&s_cards[i], i, &s);
         if (i == s_detail_idx) update_detail(&s);
+        if (printer_is_demo(i)) continue;   // 演示机器不影响息屏/亮屏
         bbl_gcode_state_t gs = s.st.valid ? s.st.gcode_state : BBL_GS_UNKNOWN;
         if (gs == BBL_GS_RUNNING || gs == BBL_GS_PREPARE || gs == BBL_GS_PAUSE) printing = true;
         // 打印开始/暂停/完成/失败时亮屏（第一次收到状态不算）
@@ -1135,6 +1161,6 @@ void ui_debug_toggle_page(void)
         back_clicked(NULL);
     } else {
         show_detail(next);
-        next = (next + 1) % printers_count();
+        next = (next + 1) % printers_total();
     }
 }

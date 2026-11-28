@@ -16,6 +16,7 @@
 #include "esp_lvgl_port.h"
 #include "esp_attr.h"
 #include "esp_cache.h"
+#include "hal/color_types.h"
 #include "driver/ppa.h"
 #include "freertos/semphr.h"
 #include <string.h>
@@ -26,6 +27,40 @@ static const char *TAG = "board";
 static esp_lcd_panel_handle_t s_panel;
 static SemaphoreHandle_t s_vsync;
 static ppa_client_handle_t s_slide_ppa;
+
+// ---- esp_lcd 内部的 DMA2D 二维拷贝（esp_lcd/priv_include/esp_async_fbcpy.h，IDF 5.5）----
+// LVGL 送屏走的就是它（use_dma2d）。头文件不对外，这里照抄声明；符号在 esp_lcd 组件里。
+typedef struct esp_async_fbcpy_context_t *esp_async_fbcpy_handle_t;
+typedef struct {
+} esp_async_fbcpy_config_t;
+typedef struct {
+    const void *src_buffer;
+    void *dst_buffer;
+    size_t src_buffer_size_x, src_buffer_size_y;
+    size_t dst_buffer_size_x, dst_buffer_size_y;
+    size_t src_offset_x, src_offset_y;
+    size_t dst_offset_x, dst_offset_y;
+    size_t copy_size_x, copy_size_y;
+    color_space_pixel_format_t pixel_format_unique_id;
+} esp_async_fbcpy_trans_desc_t;
+typedef struct {
+} esp_async_fbcpy_event_data_t;
+typedef bool (*esp_async_fbcpy_event_callback_t)(esp_async_fbcpy_handle_t mcp, esp_async_fbcpy_event_data_t *event_data,
+                                                 void *cb_args);
+esp_err_t esp_async_fbcpy_install(const esp_async_fbcpy_config_t *config, esp_async_fbcpy_handle_t *mcp);
+esp_err_t esp_async_fbcpy(esp_async_fbcpy_handle_t mcp, esp_async_fbcpy_trans_desc_t *transaction,
+                          esp_async_fbcpy_event_callback_t memcpy_done_cb, void *cb_args);
+
+static esp_async_fbcpy_handle_t s_fbcpy;
+static SemaphoreHandle_t s_fbcpy_done;
+static bool s_fbcpy_failed;
+
+static IRAM_ATTR bool on_fbcpy_done(esp_async_fbcpy_handle_t mcp, esp_async_fbcpy_event_data_t *e, void *arg)
+{
+    BaseType_t hp = pdFALSE;
+    xSemaphoreGiveFromISR(s_fbcpy_done, &hp);
+    return hp == pdTRUE;
+}
 
 // DMA2D 把 LVGL 画好的区域拷进帧缓冲后：通知 LVGL（和 esp_lvgl_port 自己的回调做的事一样）
 static IRAM_ATTR bool on_trans_done(esp_lcd_panel_handle_t p, esp_lcd_dpi_panel_event_data_t *e, void *ctx)
@@ -272,10 +307,34 @@ static float ease_out_cubic(float t)
     return 1.0f - u * u * u;
 }
 
-// 一块 SRM 拷贝：src 的 [sx, sx+w) 列、[y, y+h) 行 → 帧缓冲的 dx 列
+// 一块拷贝：src 的 [sx, sx+w) 列、[y, y+h) 行 → 帧缓冲的 dx 列。
+// 优先用 DMA2D 二维拷贝（纯搬运）；不行再用 PPA SRM（实测整屏一帧约 28ms，只有 ~34fps）。
 static bool blit(void *fb, size_t fb_size, const void *src, int sx, int dx, int w, int y, int h)
 {
     if (w <= 0) return true;
+    if (s_fbcpy) {
+        esp_async_fbcpy_trans_desc_t t = {
+            .src_buffer = src,
+            .dst_buffer = fb,
+            .src_buffer_size_x = BOARD_LCD_H_RES,
+            .src_buffer_size_y = BOARD_LCD_V_RES,
+            .dst_buffer_size_x = BOARD_LCD_H_RES,
+            .dst_buffer_size_y = BOARD_LCD_V_RES,
+            .src_offset_x = sx,
+            .src_offset_y = y,
+            .dst_offset_x = dx,
+            .dst_offset_y = y,
+            .copy_size_x = w,
+            .copy_size_y = h,
+            .pixel_format_unique_id = {.color_type_id = COLOR_TYPE_ID(COLOR_SPACE_RGB, COLOR_PIXEL_RGB565)},
+        };
+        if (esp_async_fbcpy(s_fbcpy, &t, on_fbcpy_done, NULL) == ESP_OK &&
+            xSemaphoreTake(s_fbcpy_done, pdMS_TO_TICKS(100)) == pdTRUE)
+            return true;
+        ESP_LOGW(TAG, "DMA2D copy failed, falling back to PPA");
+        s_fbcpy = NULL;
+        s_fbcpy_failed = true;
+    }
     ppa_srm_oper_config_t op = {
         .in = {.buffer = src, .pic_w = BOARD_LCD_H_RES, .pic_h = BOARD_LCD_V_RES, .block_w = w, .block_h = h,
                .block_offset_x = sx, .block_offset_y = y, .srm_cm = PPA_SRM_COLOR_MODE_RGB565},
@@ -289,6 +348,7 @@ static bool blit(void *fb, size_t fb_size, const void *src, int sx, int dx, int 
     return ppa_do_scale_rotate_mirror(s_slide_ppa, &op) == ESP_OK;
 }
 
+// 屏幕约 56Hz（51MHz / 1414x645）；一帧拷贝要在 17.9ms 内完成才能每个 vsync 出一帧
 int board_slide(const void *old_img, const void *new_img, int dir, uint32_t ms)
 {
     const int W = BOARD_LCD_H_RES, H = BOARD_LCD_V_RES, STRIP = 60;
@@ -298,6 +358,14 @@ int board_slide(const void *old_img, const void *new_img, int dir, uint32_t ms)
     if (!s_slide_ppa) {
         ppa_client_config_t pcfg = {.oper_type = PPA_OPERATION_SRM, .max_pending_trans_num = 1};
         if (ppa_register_client(&pcfg, &s_slide_ppa) != ESP_OK) return -1;
+    }
+    if (!s_fbcpy && !s_fbcpy_failed) {
+        esp_async_fbcpy_config_t fcfg = {};
+        if (!s_fbcpy_done) s_fbcpy_done = xSemaphoreCreateBinary();
+        if (!s_fbcpy_done || esp_async_fbcpy_install(&fcfg, &s_fbcpy) != ESP_OK) {
+            s_fbcpy = NULL;
+            s_fbcpy_failed = true;
+        }
     }
     // CPU 写过的两张快照先整体写回 PSRAM（PPA 驱动每块也会同步，这里一次做完后它那边基本是空操作）
     esp_cache_msync((void *)old_img, fb_size, ESP_CACHE_MSYNC_FLAG_DIR_C2M | ESP_CACHE_MSYNC_FLAG_UNALIGNED);
@@ -311,7 +379,8 @@ int board_slide(const void *old_img, const void *new_img, int dir, uint32_t ms)
     set_vsync_cb(true);
     xSemaphoreTake(s_vsync, 0);
     for (;;) {
-        // 每帧等屏幕扫完上一帧再开始拷，从上往下按条带拷：PPA 比扫描快，始终跑在扫描线前面，不撕裂
+        // 每帧等屏幕扫完上一帧（vsync）再开始拷，从上往下按条带拷：扫描线一直在拷贝位置前面
+        // （读的是完整的上一帧），下一帧开始扫时这帧已经拷完，所以不撕裂
         if (xSemaphoreTake(s_vsync, pdMS_TO_TICKS(50)) != pdTRUE) missed++;
         int64_t c0 = esp_timer_get_time();
         int64_t el = esp_timer_get_time() - t0;
@@ -333,6 +402,8 @@ int board_slide(const void *old_img, const void *new_img, int dir, uint32_t ms)
                 return -1;
             }
         }
+        // 拷贝期间来过的 vsync 作废：下一帧必须从“新的一帧刚开始扫”时开始拷，否则会撕裂
+        xSemaphoreTake(s_vsync, 0);
         int64_t c = esp_timer_get_time() - c0;
         copy_sum += c;
         if (c > copy_max) copy_max = c;
@@ -341,7 +412,7 @@ int board_slide(const void *old_img, const void *new_img, int dir, uint32_t ms)
     }
     set_vsync_cb(false);
     int64_t total = esp_timer_get_time() - t0;
-    ESP_LOGI(TAG, "slide: %d frames in %d ms (%.1f fps), PPA copy avg %.1f max %.1f ms, vsync timeouts %d", frames,
+    ESP_LOGI(TAG, "slide[%s]: %d frames in %d ms (%.1f fps), copy avg %.1f max %.1f ms, vsync timeouts %d", s_fbcpy ? "DMA2D" : "PPA", frames,
              (int)(total / 1000), total > 0 ? frames * 1e6 / total : 0.0, copy_sum / 1000.0 / frames, copy_max / 1000.0,
              missed);
     return frames;

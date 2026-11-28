@@ -6,6 +6,7 @@
 #include "bambu_parse.h"
 
 #define PRINTER_MAX 2
+#define PRINTER_UI_MAX (PRINTER_MAX + 4)   // 加上最多 4 台演示机器（DEMO_MAX）
 
 typedef enum {
     PRINTER_LINK_NOT_CONFIGURED = 0,
@@ -35,7 +36,11 @@ typedef struct {
 
 /** 从 Kconfig 读配置并创建客户端（不连接） */
 esp_err_t printers_init(void);
+/** 真实打印机的数量（下标 0..count-1） */
 int printers_count(void);
+/** 界面上显示的总数：真实打印机 + 演示机器（演示机器排在后面） */
+int printers_total(void);
+bool printer_is_demo(int idx);
 const printer_cfg_t *printer_cfg(int idx);
 
 /** 网络就绪后调用，开始连接所有打印机 */

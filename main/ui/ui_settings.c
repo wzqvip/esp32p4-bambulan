@@ -431,6 +431,7 @@ static void save_and_restart(void)
     memcpy(s.wifi_ssid, s_edit.wifi_ssid, sizeof(s.wifi_ssid));
     memcpy(s.wifi_pass, s_edit.wifi_pass, sizeof(s.wifi_pass));
     memcpy(s.printer, s_edit.printer, sizeof(s.printer));
+    s.demo_count = s_edit.demo_count;
     settings_save(&s);
     sys_restart();
 }
@@ -464,6 +465,12 @@ static void build_wifi(lv_obj_t *sec)
     lv_obj_move_to_index(lv_obj_get_parent(s_wifi_save), -1);
 }
 
+static void demo_changed(lv_event_t *e)
+{
+    s_edit.demo_count = (uint8_t)lv_dropdown_get_selected(lv_event_get_target(e));
+    lv_obj_remove_state(s_printer_save, LV_STATE_DISABLED);
+}
+
 static void build_printers(lv_obj_t *sec)
 {
     section_title(sec, "打印机");
@@ -481,6 +488,10 @@ static void build_printers(lv_obj_t *sec)
         edit_row(sec, "序列号 (SN)", p->serial, sizeof(p->serial), false, s_printer_save);
         edit_row(sec, "局域网访问码", p->access_code, sizeof(p->access_code), false, s_printer_save);
     }
+    lv_obj_t *r = row(sec, "演示机器", "不联网的虚拟打印机，用来展示界面（保存后重启生效）");
+    lv_obj_set_style_text_color(lv_obj_get_child(r, 0), C_GREEN, 0);
+    int dc = s_edit.demo_count > 4 ? 4 : s_edit.demo_count;
+    mk_dropdown(r, "不显示\n1 台\n2 台\n3 台\n4 台", dc, 200, demo_changed);
     lv_obj_t *note = label(sec, FONT_S, C_MUTED, "访问码在打印机屏幕的设置 → WLAN 里查看，开关 LAN Only 后可能会变。");
     lv_obj_set_width(note, LV_PCT(100));
     lv_label_set_long_mode(note, LV_LABEL_LONG_WRAP);

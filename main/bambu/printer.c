@@ -3,6 +3,7 @@
 
 #include <stdio.h>
 #include <string.h>
+#include <time.h>
 
 #include "esp_heap_caps.h"
 #include "esp_log.h"
@@ -16,6 +17,7 @@
 #include "sdkconfig.h"
 
 #include "bambu_cmd.h"
+#include "demo.h"
 
 static const char *TAG = "printer";
 
@@ -45,6 +47,8 @@ typedef struct {
 
 static printer_t s_printers[PRINTER_MAX];
 static int s_count;
+static int s_demo;   // 演示机器数量（开机时从设置读）
+static printer_cfg_t s_demo_cfg[DEMO_MAX];
 static esp_timer_handle_t s_resync_timer;
 
 const char *printer_link_name(printer_link_t l)
@@ -253,6 +257,11 @@ esp_err_t printers_init(void)
         esp_mqtt_client_register_event(p->client, ESP_EVENT_ANY_ID, mqtt_event_handler, p);
     }
 
+    s_demo = settings_get()->demo_count;
+    if (s_demo > DEMO_MAX) s_demo = DEMO_MAX;
+    if (s_count + s_demo > PRINTER_UI_MAX) s_demo = PRINTER_UI_MAX - s_count;
+    for (int i = 0; i < s_demo; i++) snprintf(s_demo_cfg[i].name, sizeof(s_demo_cfg[i].name), "%s", demo_name(i));
+
     const esp_timer_create_args_t targs = {.callback = resync_timer_cb, .name = "bbl_resync"};
     ESP_ERROR_CHECK(esp_timer_create(&targs, &s_resync_timer));
     return ESP_OK;
@@ -272,8 +281,22 @@ void printers_start(void)
 
 int printers_count(void) { return s_count; }
 
+int printers_total(void) { return s_count + s_demo; }
+
+bool printer_is_demo(int idx) { return idx >= s_count && idx < s_count + s_demo; }
+
+static int64_t unix_now(void)
+{
+    time_t t = time(NULL);
+    return t > 1700000000 ? (int64_t)t : 0;   // 还没对时就不显示开始时间
+}
+
 const char *printer_display_name(int idx, char *buf, size_t cap)
 {
+    if (printer_is_demo(idx)) {
+        snprintf(buf, cap, "%s", demo_name(idx - s_count));
+        return buf;
+    }
     if (idx < 0 || idx >= s_count) return "-";
     printer_t *p = &s_printers[idx];
     xSemaphoreTake(p->lock, portMAX_DELAY);
@@ -298,11 +321,16 @@ void printer_set_dev_name(const char *serial, const char *name)
 
 const printer_cfg_t *printer_cfg(int idx)
 {
+    if (printer_is_demo(idx)) return &s_demo_cfg[idx - s_count];
     return (idx >= 0 && idx < s_count) ? &s_printers[idx].cfg : NULL;
 }
 
 bool printer_get(int idx, printer_snapshot_t *out)
 {
+    if (printer_is_demo(idx)) {   // 只在界面线程里调用，不用加锁
+        demo_get(idx - s_count, esp_timer_get_time() / 1000, unix_now(), out);
+        return true;
+    }
     if (idx < 0 || idx >= s_count) return false;
     printer_t *p = &s_printers[idx];
     xSemaphoreTake(p->lock, portMAX_DELAY);
@@ -312,9 +340,13 @@ bool printer_get(int idx, printer_snapshot_t *out)
 }
 
 #define CMD_BUF 256
-#define DEFINE_CMD(fn, builder_call)                         \
+#define DEFINE_CMD(fn, demo_c, demo_v, builder_call)        \
     esp_err_t fn                                             \
     {                                                        \
+        if (printer_is_demo(idx)) {                          \
+            demo_cmd(idx - s_count, demo_c, demo_v);         \
+            return ESP_OK;                                   \
+        }                                                    \
         if (idx < 0 || idx >= s_count) return ESP_ERR_INVALID_ARG; \
         printer_t *p = &s_printers[idx];                     \
         char buf[CMD_BUF];                                   \
@@ -323,17 +355,18 @@ bool printer_get(int idx, printer_snapshot_t *out)
         return publish(p, buf, n);                           \
     }
 
-DEFINE_CMD(printer_pause(int idx), bbl_cmd_pause(buf, sizeof(buf), seq))
-DEFINE_CMD(printer_resume(int idx), bbl_cmd_resume(buf, sizeof(buf), seq))
-DEFINE_CMD(printer_stop(int idx), bbl_cmd_stop(buf, sizeof(buf), seq))
-DEFINE_CMD(printer_set_speed(int idx, int level), bbl_cmd_speed(buf, sizeof(buf), seq, level))
-DEFINE_CMD(printer_set_light(int idx, bool on), bbl_cmd_light(buf, sizeof(buf), seq, on))
-DEFINE_CMD(printer_set_nozzle_temp(int idx, int c), bbl_cmd_nozzle_temp(buf, sizeof(buf), seq, c))
-DEFINE_CMD(printer_set_bed_temp(int idx, int c), bbl_cmd_bed_temp(buf, sizeof(buf), seq, c))
-DEFINE_CMD(printer_set_part_fan(int idx, int pct), bbl_cmd_part_fan(buf, sizeof(buf), seq, pct))
+DEFINE_CMD(printer_pause(int idx), DEMO_CMD_PAUSE, 0, bbl_cmd_pause(buf, sizeof(buf), seq))
+DEFINE_CMD(printer_resume(int idx), DEMO_CMD_RESUME, 0, bbl_cmd_resume(buf, sizeof(buf), seq))
+DEFINE_CMD(printer_stop(int idx), DEMO_CMD_STOP, 0, bbl_cmd_stop(buf, sizeof(buf), seq))
+DEFINE_CMD(printer_set_speed(int idx, int level), DEMO_CMD_SPEED, level, bbl_cmd_speed(buf, sizeof(buf), seq, level))
+DEFINE_CMD(printer_set_light(int idx, bool on), DEMO_CMD_LIGHT, on, bbl_cmd_light(buf, sizeof(buf), seq, on))
+DEFINE_CMD(printer_set_nozzle_temp(int idx, int c), DEMO_CMD_NOZZLE, c, bbl_cmd_nozzle_temp(buf, sizeof(buf), seq, c))
+DEFINE_CMD(printer_set_bed_temp(int idx, int c), DEMO_CMD_BED, c, bbl_cmd_bed_temp(buf, sizeof(buf), seq, c))
+DEFINE_CMD(printer_set_part_fan(int idx, int pct), DEMO_CMD_FAN, pct, bbl_cmd_part_fan(buf, sizeof(buf), seq, pct))
 
 esp_err_t printer_request_full_status(int idx)
 {
+    if (printer_is_demo(idx)) return ESP_OK;
     if (idx < 0 || idx >= s_count) return ESP_ERR_INVALID_ARG;
     send_pushall(&s_printers[idx]);
     return ESP_OK;

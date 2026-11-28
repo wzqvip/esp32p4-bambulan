@@ -9,6 +9,7 @@
 #include "lvgl.h"
 #include "net.h"
 #include "printer.h"
+#include "demo.h"
 #include "ui.h"
 #include "settings.h"
 
@@ -19,10 +20,25 @@ int64_t esp_timer_get_time(void) { return s_ms * 1000; }
 static printer_cfg_t cfgs[2] = {{"A1 一号", "192.168.1.31", "03919A3B0100001", "12345678"},
                                 {"A1 二号", "192.168.1.32", "03919A3B0100002", "87654321"}};
 static printer_snapshot_t snaps[2];
+#define SIM_DEMOS 2
+static printer_cfg_t demo_cfgs[SIM_DEMOS];
 int printers_count(void) { return 2; }
-const printer_cfg_t *printer_cfg(int i) { return (i >= 0 && i < 2) ? &cfgs[i] : NULL; }
+int printers_total(void) { return 2 + SIM_DEMOS; }
+bool printer_is_demo(int i) { return i >= 2 && i < 2 + SIM_DEMOS; }
+const printer_cfg_t *printer_cfg(int i)
+{
+    if (printer_is_demo(i)) {
+        snprintf(demo_cfgs[i - 2].name, sizeof(demo_cfgs[0].name), "%s", demo_name(i - 2));
+        return &demo_cfgs[i - 2];
+    }
+    return (i >= 0 && i < 2) ? &cfgs[i] : NULL;
+}
 bool printer_get(int i, printer_snapshot_t *o)
 {
+    if (printer_is_demo(i)) {
+        demo_get(i - 2, s_ms, 1764300000, o);
+        return true;
+    }
     *o = snaps[i];
     return true;
 }
@@ -33,7 +49,8 @@ const char *printer_link_name(printer_link_t l)
 }
 const char *printer_display_name(int i, char *buf, size_t cap)
 {
-    snprintf(buf, cap, "%s", i == 1 ? "塔可的A1" : cfgs[i].name);
+    if (printer_is_demo(i)) snprintf(buf, cap, "%s", demo_name(i - 2));
+    else snprintf(buf, cap, "%s", i == 1 ? "塔可的A1" : cfgs[i].name);
     return buf;
 }
 static const char *s_last_cmd = "";
@@ -352,6 +369,30 @@ int main(void)
         printf("full-screen frame: widgets %.2f ms, snapshot images %.2f ms (PC)\n", full, snap);
         run(600);
         shot("slide_end");
+    }
+    // 首页滚动 + 演示机器
+    {
+        settings_t st = *settings_get();
+        st.page_anim = false;
+        settings_save(&st);
+        tap(70, 32);   // 返回概览
+        run(600);
+        lv_obj_t *scr = lv_screen_active(), *list = NULL;
+        for (uint32_t i = 0; i < lv_obj_get_child_count(scr); i++) {
+            lv_obj_t *c = lv_obj_get_child(scr, i);
+            if (lv_obj_get_width(c) == 1024 && lv_obj_has_flag(c, LV_OBJ_FLAG_SCROLLABLE)) list = c;
+        }
+        if (list) {
+            lv_obj_scroll_to_y(list, 536, LV_ANIM_OFF);
+            run(600);
+            shot("overview_scrolled");
+            idle_check("overview_scrolled");
+            tap(260, 300);   // 演示机器 1
+            run(600);
+            shot("detail_demo");
+        } else {
+            printf("no scroll list!\n");
+        }
     }
     return 0;
 }
