@@ -6,7 +6,7 @@ idf_component_register(
     INCLUDE_DIRS "." "bambu" "ui"
     EMBED_TXTFILES "certs/bambu_ca.pem"
     REQUIRES esp_lcd esp_driver_ledc esp_driver_gpio esp_driver_i2c esp_wifi esp_netif
-             esp_event nvs_flash mqtt json esp_timer esp-tls esp_driver_jpeg esp_driver_ppa esp_app_format esp_mm
+             esp_event nvs_flash mqtt json esp_timer esp-tls esp_driver_jpeg esp_driver_ppa esp_app_format esp_mm mbedtls
              lvgl esp_lvgl_port esp_lcd_ek79007 esp_lcd_touch_gt911 esp_wifi_remote esp_hosted
 )
 target_compile_options(${COMPONENT_LIB} PRIVATE -Wno-unused-const-variable)

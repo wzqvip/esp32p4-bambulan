@@ -54,6 +54,7 @@ esp_err_t esp_async_fbcpy(esp_async_fbcpy_handle_t mcp, esp_async_fbcpy_trans_de
 static esp_async_fbcpy_handle_t s_fbcpy;
 static SemaphoreHandle_t s_fbcpy_done;
 static bool s_fbcpy_failed;
+static void slide_hw_init(void);
 
 static IRAM_ATTR bool on_fbcpy_done(esp_async_fbcpy_handle_t mcp, esp_async_fbcpy_event_data_t *e, void *arg)
 {
@@ -278,6 +279,7 @@ esp_err_t board_display_init(lv_display_t **out_disp)
     s_vsync = xSemaphoreCreateBinary();
     s_disp = disp;
     set_vsync_cb(false);
+    slide_hw_init();
 
     if (tp) {
         const lvgl_port_touch_cfg_t tcfg = {.disp = disp, .handle = tp};
@@ -335,6 +337,7 @@ static bool blit(void *fb, size_t fb_size, const void *src, int sx, int dx, int 
         s_fbcpy = NULL;
         s_fbcpy_failed = true;
     }
+    if (!s_slide_ppa) return false;
     ppa_srm_oper_config_t op = {
         .in = {.buffer = src, .pic_w = BOARD_LCD_H_RES, .pic_h = BOARD_LCD_V_RES, .block_w = w, .block_h = h,
                .block_offset_x = sx, .block_offset_y = y, .srm_cm = PPA_SRM_COLOR_MODE_RGB565},
@@ -348,6 +351,22 @@ static bool blit(void *fb, size_t fb_size, const void *src, int sx, int dx, int 
     return ppa_do_scale_rotate_mirror(s_slide_ppa, &op) == ESP_OK;
 }
 
+// 切页滑动用的 DMA2D / PPA 在开机时装好（在 app_main 里，中断分配在 core 0）。
+// 不要等到第一次切页才装：那时在 LVGL 任务（core 1）里分配中断，会把 core 1 的中断输入占满，
+// 之后 mbedTLS 第一次用硬件 AES 分不到中断直接 abort（实测出现过）。
+static void slide_hw_init(void)
+{
+    esp_async_fbcpy_config_t fcfg = {};
+    s_fbcpy_done = xSemaphoreCreateBinary();
+    if (!s_fbcpy_done || esp_async_fbcpy_install(&fcfg, &s_fbcpy) != ESP_OK) {
+        ESP_LOGW(TAG, "DMA2D copy not available, page slide will use PPA");
+        s_fbcpy = NULL;
+        s_fbcpy_failed = true;
+        ppa_client_config_t pcfg = {.oper_type = PPA_OPERATION_SRM, .max_pending_trans_num = 1};
+        if (ppa_register_client(&pcfg, &s_slide_ppa) != ESP_OK) s_slide_ppa = NULL;
+    }
+}
+
 // 屏幕约 56Hz（51MHz / 1414x645）；一帧拷贝要在 17.9ms 内完成才能每个 vsync 出一帧
 int board_slide(const void *old_img, const void *new_img, int dir, uint32_t ms)
 {
@@ -355,18 +374,7 @@ int board_slide(const void *old_img, const void *new_img, int dir, uint32_t ms)
     void *fb = NULL;
     size_t fb_size = (size_t)W * H * 2;
     if (!s_panel || !s_vsync || esp_lcd_dpi_panel_get_frame_buffer(s_panel, 1, &fb) != ESP_OK || !fb) return -1;
-    if (!s_slide_ppa) {
-        ppa_client_config_t pcfg = {.oper_type = PPA_OPERATION_SRM, .max_pending_trans_num = 1};
-        if (ppa_register_client(&pcfg, &s_slide_ppa) != ESP_OK) return -1;
-    }
-    if (!s_fbcpy && !s_fbcpy_failed) {
-        esp_async_fbcpy_config_t fcfg = {};
-        if (!s_fbcpy_done) s_fbcpy_done = xSemaphoreCreateBinary();
-        if (!s_fbcpy_done || esp_async_fbcpy_install(&fcfg, &s_fbcpy) != ESP_OK) {
-            s_fbcpy = NULL;
-            s_fbcpy_failed = true;
-        }
-    }
+    if (!s_fbcpy && !s_slide_ppa) return -1;
     // CPU 写过的两张快照先整体写回 PSRAM（PPA 驱动每块也会同步，这里一次做完后它那边基本是空操作）
     esp_cache_msync((void *)old_img, fb_size, ESP_CACHE_MSYNC_FLAG_DIR_C2M | ESP_CACHE_MSYNC_FLAG_UNALIGNED);
     esp_cache_msync((void *)new_img, fb_size, ESP_CACHE_MSYNC_FLAG_DIR_C2M | ESP_CACHE_MSYNC_FLAG_UNALIGNED);
