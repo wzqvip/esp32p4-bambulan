@@ -577,6 +577,7 @@ void ui_settings_build(void)
     lv_obj_remove_flag(s_scr, LV_OBJ_FLAG_SCROLLABLE);
     s_edit = *settings_get();
 
+    ui_header_band(s_scr);
     lv_obj_t *back = button(s_scr, LV_SYMBOL_LEFT " 返回", C_CARD, 120, 44, back_clicked, NULL);
     lv_obj_set_pos(back, 12, 10);
     lv_obj_t *t = label(s_scr, FONT_L, C_TEXT, "设置");

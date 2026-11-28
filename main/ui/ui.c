@@ -162,6 +162,7 @@ static lv_obj_t *mk_bar(lv_obj_t *parent, int x, int y, int w, int h)
     lv_obj_set_style_bg_color(b, C_GREEN, LV_PART_INDICATOR);
     lv_obj_set_style_radius(b, h / 2, LV_PART_MAIN);
     lv_obj_set_style_radius(b, h / 2, LV_PART_INDICATOR);
+    lv_obj_set_style_anim_duration(b, 800, 0);   // 数值变化时平滑过渡（只重画进度条这一小块）
     lv_obj_remove_flag(b, LV_OBJ_FLAG_CLICKABLE);
     return b;
 }
@@ -276,7 +277,7 @@ static void update_ams_chip(ams_row_t *a, int i, const bbl_tray_t *t, bool activ
     // 余量未知（没有 RFID 的料盘通常是 -1）就不画
     if (t->loaded && t->remain >= 0) {
         set_hidden(a->remain[i], false);
-        lv_bar_set_value(a->remain[i], t->remain, LV_ANIM_OFF);
+        lv_bar_set_value(a->remain[i], t->remain, LV_ANIM_ON);
         lv_obj_set_style_bg_color(a->remain[i], t->remain < 15 ? C_WARN : C_TEAL, LV_PART_INDICATOR);
     } else {
         set_hidden(a->remain[i], true);
@@ -363,9 +364,35 @@ static lv_color_t state_color(bbl_gcode_state_t st)
     }
 }
 
+static void badge_opa_cb(void *obj, int32_t v) { lv_obj_set_style_bg_opa(obj, (lv_opa_t)v, 0); }
+
+// 打印中的状态标签做“呼吸”效果：只改这个小标签的背景透明度，重画面积很小
+static void set_breathing(lv_obj_t *badge, bool on)
+{
+    bool running = lv_anim_get(badge, badge_opa_cb) != NULL;
+    if (on == running) return;
+    if (on) {
+        lv_anim_t a;
+        lv_anim_init(&a);
+        lv_anim_set_var(&a, badge);
+        lv_anim_set_exec_cb(&a, badge_opa_cb);
+        lv_anim_set_values(&a, LV_OPA_COVER, 130);
+        lv_anim_set_duration(&a, 1200);
+        lv_anim_set_playback_duration(&a, 1200);
+        lv_anim_set_repeat_count(&a, LV_ANIM_REPEAT_INFINITE);
+        lv_anim_set_path_cb(&a, lv_anim_path_ease_in_out);
+        lv_anim_start(&a);
+    } else {
+        lv_anim_delete(badge, badge_opa_cb);
+        lv_obj_set_style_bg_opa(badge, LV_OPA_COVER, 0);
+    }
+}
+
 static void set_badge(lv_obj_t *badge, const printer_snapshot_t *s)
 {
-    if (s->link == PRINTER_LINK_ONLINE && s->st.valid) {
+    bool online = s->link == PRINTER_LINK_ONLINE && s->st.valid;
+    set_breathing(badge, online && s->st.gcode_state == BBL_GS_RUNNING);
+    if (online) {
         set_text(badge, bbl_gcode_state_name(s->st.gcode_state));
         set_bg_color(badge, state_color(s->st.gcode_state));
     } else {
@@ -378,7 +405,7 @@ static void set_badge(lv_obj_t *badge, const printer_snapshot_t *s)
 
 static void update_bar(lv_obj_t *bar, const bbl_status_t *st, bool has)
 {
-    lv_bar_set_value(bar, has ? st->percent : 0, LV_ANIM_OFF);
+    lv_bar_set_value(bar, has ? st->percent : 0, LV_ANIM_ON);
     lv_obj_set_style_bg_color(bar, has ? state_color(st->gcode_state) : C_CARD2, LV_PART_INDICATOR);
 }
 
@@ -550,10 +577,41 @@ static void update_card(card_t *c, int idx, const printer_snapshot_t *s)
     }
 }
 
-static void build_topbar(lv_obj_t *scr, const char *title, lv_obj_t **clock, lv_obj_t **wifi)
+// 顶栏底色：左边一抹墨绿渐变到背景色，底部一条绿色细线（同样往右渐隐）
+void ui_header_band(lv_obj_t *scr)
 {
-    lv_obj_t *t = mk_label(scr, FONT_L, C_TEXT, title);
+    lv_obj_t *band = lv_obj_create(scr);
+    lv_obj_remove_style_all(band);
+    lv_obj_set_size(band, 1024, 62);
+    lv_obj_set_pos(band, 0, 0);
+    lv_obj_set_style_bg_opa(band, LV_OPA_COVER, 0);
+    lv_obj_set_style_bg_color(band, C_HEADER, 0);
+    lv_obj_set_style_bg_grad_color(band, C_BG, 0);
+    lv_obj_set_style_bg_grad_dir(band, LV_GRAD_DIR_HOR, 0);
+    lv_obj_set_style_bg_main_stop(band, 0, 0);
+    lv_obj_set_style_bg_grad_stop(band, 200, 0);
+    lv_obj_remove_flag(band, LV_OBJ_FLAG_CLICKABLE | LV_OBJ_FLAG_SCROLLABLE);
+    lv_obj_t *line = lv_obj_create(scr);
+    lv_obj_remove_style_all(line);
+    lv_obj_set_size(line, 1024, 2);
+    lv_obj_set_pos(line, 0, 60);
+    lv_obj_set_style_bg_opa(line, LV_OPA_COVER, 0);
+    lv_obj_set_style_bg_color(line, C_GREEN, 0);
+    lv_obj_set_style_bg_grad_color(line, C_BG, 0);
+    lv_obj_set_style_bg_grad_dir(line, LV_GRAD_DIR_HOR, 0);
+    lv_obj_remove_flag(line, LV_OBJ_FLAG_CLICKABLE | LV_OBJ_FLAG_SCROLLABLE);
+    lv_obj_move_to_index(line, 0);
+    lv_obj_move_to_index(band, 0);
+}
+
+static void build_topbar(lv_obj_t *scr, lv_obj_t **clock, lv_obj_t **wifi)
+{
+    ui_header_band(scr);
+    // “Bambu” 用品牌绿，“-Lan” 白色
+    lv_obj_t *t = mk_label(scr, FONT_L, C_GREEN, "Bambu");
     lv_obj_set_pos(t, 20, 14);
+    lv_obj_t *t2 = mk_label(scr, FONT_L, C_TEXT, "-Lan");
+    lv_obj_align_to(t2, t, LV_ALIGN_OUT_RIGHT_MID, 0, 0);
     if (clock) {
         *clock = mk_label(scr, FONT_L, C_TEXT, "--:--");
         lv_obj_align(*clock, LV_ALIGN_TOP_RIGHT, -20, 14);
@@ -574,7 +632,7 @@ static void build_overview(void)
     s_overview = lv_obj_create(NULL);
     set_bg_color(s_overview, C_BG);
     lv_obj_remove_flag(s_overview, LV_OBJ_FLAG_SCROLLABLE);
-    build_topbar(s_overview, "Bambu-Lan", &s_clock, &s_wifi);
+    build_topbar(s_overview, &s_clock, &s_wifi);
     lv_obj_t *gear = mk_btn(s_overview, LV_SYMBOL_SETTINGS " 设置", C_CARD, 110, 40, settings_clicked, NULL, NULL);
     lv_obj_set_pos(gear, 200, 12);
 
@@ -756,6 +814,7 @@ static void build_detail(void)
     set_bg_color(d->scr, C_BG);
     lv_obj_remove_flag(d->scr, LV_OBJ_FLAG_SCROLLABLE);
 
+    ui_header_band(d->scr);
     lv_obj_t *back = mk_btn(d->scr, LV_SYMBOL_LEFT " 返回", C_CARD, 120, 44, back_clicked, NULL, NULL);
     lv_obj_set_pos(back, 12, 10);
     d->title = mk_label(d->scr, FONT_L, C_TEXT, "");

@@ -15,6 +15,7 @@
 #define C_RED lv_color_hex(0xE5484D)
 #define C_TEAL lv_color_hex(0x2BB3A3)
 #define C_BLACK lv_color_hex(0x000000)
+#define C_HEADER lv_color_hex(0x0E3A24)   // 顶栏左侧的墨绿
 
 #define FONT_S (&ui_font_cn_20)
 #define FONT_L (&ui_font_cn_28)
@@ -30,3 +31,5 @@ void ui_settings_tick(bool any_printing, bool wake);
 uint32_t ui_page_anim_ms(void);
 /** 调试：打开设置页 / 切到下一个分区 */
 void ui_settings_debug_next(void);
+/** 顶栏底色（墨绿渐变 + 绿色细线），在屏幕上其他控件之前或之后调用都行（会放到最底层） */
+void ui_header_band(lv_obj_t *scr);
