@@ -6,6 +6,7 @@
 //   wait   = 最后一次 FLUSH_START → FLUSH_FINISH：等屏幕 vsync 换缓冲（约 56Hz，最长约 18ms）
 // 切页动画期间（存在 prev_scr）的帧单独统计，动画结束后打印一行汇总和逐帧耗时。
 #include "ui.h"
+#include "ui_priv.h"
 
 #include <stdio.h>
 #include <string.h>
@@ -124,6 +125,13 @@ static void cycle_cb(lv_timer_t *t)
 }
 #endif
 
+#if CONFIG_BBL_DEBUG_SETTINGS_TOUR
+static void tour_cb(lv_timer_t *t)
+{
+    ui_settings_debug_next();
+}
+#endif
+
 void ui_debug_init(lv_display_t *disp)
 {
 #if CONFIG_BBL_DEBUG_PERF
@@ -131,6 +139,9 @@ void ui_debug_init(lv_display_t *disp)
 #endif
 #if CONFIG_BBL_DEBUG_PAGE_CYCLE
     lv_timer_create(cycle_cb, 3000, NULL);
+#endif
+#if CONFIG_BBL_DEBUG_SETTINGS_TOUR
+    lv_timer_create(tour_cb, 5000, NULL);
 #endif
     (void)disp;
 }

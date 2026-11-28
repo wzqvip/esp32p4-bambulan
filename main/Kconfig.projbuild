@@ -98,6 +98,10 @@ menu "拓竹屏配置 (Bambu screen)"
             bool "自动在总览和详情页之间来回切换（每 3 秒）"
             default n
 
+        config BBL_DEBUG_SETTINGS_TOUR
+            bool "自动打开设置页，每 5 秒切到下一个分区（拍照检查用）"
+            default n
+
         config BBL_DEBUG_NO_CAMERA
             bool "不连接摄像头（排查闪烁用）"
             default n

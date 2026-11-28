@@ -690,3 +690,13 @@ void ui_settings_tick(bool any_printing, bool wake_event)
     lv_obj_move_foreground(s_blocker);
     sys_set_backlight(st->sleep_level);
 }
+
+void ui_settings_debug_next(void)
+{
+    if (lv_screen_active() != s_scr) {
+        s_cur_sec = 0;
+        ui_settings_open(lv_screen_active());
+    } else {
+        show_section((s_cur_sec + 1) % NAV_N);
+    }
+}

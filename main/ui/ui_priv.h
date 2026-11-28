@@ -28,3 +28,5 @@ void ui_settings_open(lv_obj_t *back_to);
 void ui_settings_tick(bool any_printing, bool wake);
 /** 切页动画时长（ms），0 = 直接切换 */
 uint32_t ui_page_anim_ms(void);
+/** 调试：打开设置页 / 切到下一个分区 */
+void ui_settings_debug_next(void);
